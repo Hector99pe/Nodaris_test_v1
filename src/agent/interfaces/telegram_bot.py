@@ -11,7 +11,7 @@ from typing import Final
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.constants import ParseMode
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 # Configure logging
 logging.basicConfig(
@@ -33,8 +33,13 @@ if str(src_path) not in sys.path:
 from agent.config import Config
 from agent.graph import graph
 from agent.state import AcademicAuditState
+from agent.conversation import process_conversation
 
 AUDIT_USAGE: Final[str] = "Uso: /auditar <dni> <nota>. Ejemplo: /auditar 12345678 15"
+
+# Store conversation history per chat (simple in-memory storage)
+# In production, use a database
+conversation_history: dict = {}
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -42,12 +47,24 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     _ = context
     if update.message is None:
         return
+
+    # Clear conversation history for this chat
+    chat_id = update.message.chat_id
+    if chat_id in conversation_history:
+        del conversation_history[chat_id]
+
     await update.message.reply_text(
-        "🎓 <b>Nodaris Agent</b> - Auditoría Académica\n\n"
-        "Comandos disponibles:\n"
-        "• /auditar &lt;dni&gt; &lt;nota&gt; - Auditar registro académico\n"
+        "🎓 <b>Nodaris Agent</b> - Asistente de Auditoría Académica\n\n"
+        "¡Hola! Soy Nodaris, tu asistente inteligente para auditorías académicas.\n\n"
+        "<b>Puedes:</b>\n"
+        "• Escribirme en lenguaje natural\n"
+        "• Pedirme auditar un registro\n"
+        "• Verificar hashes de autenticación\n"
+        "• Consultar sobre el sistema de notas\n\n"
+        "<b>Comandos:</b>\n"
+        "• /auditar &lt;dni&gt; &lt;nota&gt; - Auditoría rápida\n"
         "• /help - Ver ayuda\n\n"
-        "Escala de notas: 0-20",
+        "<i>Ejemplo: 'Audita el registro del DNI 12345678 con nota 15'</i>",
         parse_mode=ParseMode.HTML
     )
 
@@ -111,6 +128,74 @@ async def auditar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.message.reply_text(response, parse_mode=ParseMode.HTML)
 
 
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle conversational messages using AI."""
+    _ = context
+    if update.message is None or update.message.text is None:
+        return
+
+    chat_id = update.message.chat_id
+    user_message = update.message.text
+
+    # Show typing indicator
+    await update.message.chat.send_action("typing")
+
+    try:
+        # Get or create conversation history for this chat
+        if chat_id not in conversation_history:
+            conversation_history[chat_id] = []
+
+        history = conversation_history[chat_id]
+
+        # Limit history to last 10 messages (5 exchanges) to avoid context overflow
+        if len(history) > 10:
+            history = history[-10:]
+
+        # Process with conversational agent
+        response = await process_conversation(user_message, history)
+
+        # Update history
+        history.append({"role": "user", "content": user_message})
+        history.append({"role": "assistant", "content": response})
+        conversation_history[chat_id] = history
+
+        # Send response (escape HTML if needed)
+        await update.message.reply_text(response)
+
+    except Exception as e:
+        logger.error(f"Error processing message: {e}", exc_info=True)
+
+        # Handle specific OpenAI errors
+        error_message = "❌ Ocurrió un error al procesar tu mensaje."
+
+        if "insufficient_quota" in str(e):
+            error_message = (
+                "⚠️ <b>Error de cuota OpenAI</b>\n\n"
+                "La cuenta de OpenAI ha excedido su cuota disponible.\n\n"
+                "📝 <b>Solución:</b>\n"
+                "• Visita: https://platform.openai.com/account/billing\n"
+                "• Agrega créditos a tu cuenta\n"
+                "• Verifica tu plan y límites\n\n"
+                "Contacta al administrador para más información."
+            )
+        elif "model_not_found" in str(e) or "does not exist" in str(e):
+            error_message = (
+                "⚠️ <b>Modelo no disponible</b>\n\n"
+                "El modelo de IA configurado no está disponible en tu cuenta.\n"
+                "Contacta al administrador."
+            )
+        elif "rate_limit" in str(e).lower():
+            error_message = (
+                "⚠️ <b>Límite de solicitudes alcanzado</b>\n\n"
+                "Se han realizado demasiadas solicitudes. "
+                "Por favor, espera un momento e intenta de nuevo."
+            )
+        else:
+            error_message += "\n\nPor favor, intenta de nuevo o contacta al administrador."
+
+        await update.message.reply_text(error_message, parse_mode=ParseMode.HTML)
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle errors in the telegram bot."""
     logger.error("Exception while handling an update:", exc_info=context.error)
@@ -157,6 +242,9 @@ def run_telegram_bot() -> None:
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("auditar", auditar_command))
+
+    # Add conversational message handler (non-command messages)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Add error handler
     app.add_error_handler(error_handler)
