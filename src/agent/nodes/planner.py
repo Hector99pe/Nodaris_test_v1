@@ -11,6 +11,30 @@ from langchain_core.messages import HumanMessage
 from langsmith import traceable
 
 from agent.config import Config
+from agent.storage import AuditStore
+
+
+def _reorder_by_learning(mode: str, recommended: list[str]) -> tuple[list[str], str]:
+    """Prioritize recommended analyses using historical memory when available."""
+    if not Config.LEARNING_MEMORY_ENABLED or not recommended:
+        return recommended, ""
+
+    try:
+        profile = AuditStore().get_learning_profile(mode)
+    except Exception:
+        return recommended, ""
+
+    ranked = profile.get("ranked_tools", [])
+    if not ranked:
+        return recommended, ""
+
+    # Keep only tools suggested for this run, ordered by historical performance first.
+    preferred = [tool for tool in ranked if tool in recommended]
+    trailing = [tool for tool in recommended if tool not in preferred]
+    final_tools = preferred + trailing
+
+    hint = ", ".join(preferred[: Config.LEARNING_MEMORY_TOP_TOOLS])
+    return final_tools, hint
 
 
 @traceable(name="plannerNode")
@@ -98,16 +122,30 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
             recommended.append("analizar_tiempos")
         if context["has_questions"]:
             recommended.append("evaluar_dificultad")
+        recommended, memory_hint = _reorder_by_learning(mode, recommended)
         plan_parts.append(f"🔧 Análisis recomendados: {', '.join(recommended)}")
+        if memory_hint:
+            plan_parts.append(f"🧠 Prioridad por histórico: {memory_hint}")
 
     elif mode == "individual":
         plan_parts.append(f"👤 DNI: {state.get('dni', 'N/A')}, Nota: {state.get('nota', 'N/A')}")
 
+    # Detect re-planning (reflection has already happened at least once)
+    is_replan = state.get("iteration_count", 0) > 0
+    reflection_notes = state.get("reflection_notes", "") if is_replan else ""
+    replan_num = state.get("iteration_count", 1) if is_replan else 0
+
+    if is_replan:
+        plan_parts.insert(0, f"🔄 Re-planificación #{replan_num}")
+        if reflection_notes:
+            plan_parts.append(f"📋 Motivo: {reflection_notes}")
+
     plan_text = "\n".join(plan_parts)
 
-    # Build initial message if none exists
+    # Build message for the LLM
     messages_update = []
     if not state.get("messages"):
+        # First run: inject initial task message
         if mode == "file":
             msg = f"Necesito auditar los datos del archivo: {state.get('file_path')}"
         elif mode == "full_exam":
@@ -118,10 +156,20 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
         else:
             msg = state.get("usuario_query", "Consulta de auditoría académica")
         messages_update.append(HumanMessage(content=msg))
+    elif is_replan and reflection_notes:
+        # Re-plan run: inject reflection feedback so the LLM adjusts its strategy
+        messages_update.append(HumanMessage(
+            content=(
+                f"[Re-planificación #{replan_num}] El análisis anterior fue insuficiente. "
+                f"{reflection_notes}. "
+                "Ajusta tu enfoque y ejecuta los análisis que falten."
+            )
+        ))
 
+    label = f"Re-planificación #{replan_num} ({mode_text})" if is_replan else f"Plan de auditoría creado ({mode_text})"
     return {
         "plan": plan_text,
         "status": "planned",
-        "mensaje": f"Plan de auditoría creado ({mode_text})",
+        "mensaje": label,
         "messages": messages_update,
     }

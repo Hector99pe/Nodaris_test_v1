@@ -38,6 +38,7 @@ from langgraph.types import Command
 from agent.config import Config
 from agent.graph.graph import get_graph_with_memory
 from agent.conversation import process_conversation
+from agent.resilience import CircuitBreakerOpenError, format_llm_circuit_breaker_message
 
 # Graph with memory checkpointer for Telegram persistence
 _graph = get_graph_with_memory()
@@ -108,7 +109,11 @@ async def auditar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     config = {"configurable": {"thread_id": thread_id}}
 
     state = {"dni": dni, "nota": nota}
-    result = await _graph.ainvoke(state, config=config)
+    try:
+        result = await _graph.ainvoke(state, config=config)
+    except CircuitBreakerOpenError as exc:
+        await update.message.reply_text(format_llm_circuit_breaker_message(exc))
+        return
 
     if result.get("status") == "error":
         error_msg = html.escape(result.get('mensaje', 'sin detalle'))
@@ -208,7 +213,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
     except Exception as e:
         logger.error(f"Error processing document: {e}", exc_info=True)
-        await update.message.reply_text("❌ Error al procesar el archivo. Intenta de nuevo.")
+        if isinstance(e, CircuitBreakerOpenError):
+            await update.message.reply_text(format_llm_circuit_breaker_message(e))
+        else:
+            await update.message.reply_text("❌ Error al procesar el archivo. Intenta de nuevo.")
     finally:
         # Clean up temp file
         try:
@@ -275,7 +283,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         error_message = "❌ Ocurrió un error al procesar tu mensaje."
 
-        if "insufficient_quota" in str(e):
+        if isinstance(e, CircuitBreakerOpenError):
+            error_message = format_llm_circuit_breaker_message(e)
+        elif "insufficient_quota" in str(e):
             error_message = (
                 "⚠️ <b>Error de cuota OpenAI</b>\n\n"
                 "La cuenta de OpenAI ha excedido su cuota disponible.\n\n"

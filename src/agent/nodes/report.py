@@ -7,6 +7,8 @@ from datetime import datetime
 from typing import Dict, Any
 from langsmith import traceable
 
+from agent.storage import AuditStore
+
 
 @traceable(name="reportNode")
 def report_node(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -250,8 +252,19 @@ def report_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     final_report = "\n".join(report_sections)
 
+    audit_id = None
+    try:
+        audit_id = AuditStore().save_audit(state, final_report)
+    except Exception:
+        # Report generation must not fail if persistence is temporarily unavailable.
+        audit_id = None
+
+    mensaje = "Reporte generado exitosamente"
+    if audit_id is not None:
+        mensaje = f"Reporte generado y persistido (audit_id={audit_id})"
+
     return {
         "reporte_final": final_report,
         "status": "completed",
-        "mensaje": "Reporte generado exitosamente",
+        "mensaje": mensaje,
     }

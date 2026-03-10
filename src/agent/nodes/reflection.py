@@ -10,6 +10,9 @@ from typing import Dict, Any
 from langchain_core.messages import HumanMessage, ToolMessage
 from langsmith import traceable
 
+from agent.config import Config
+from agent.storage import AuditStore
+
 
 def _extract_tool_results(state: Dict[str, Any]) -> Dict[str, Any]:
     """Extract structured data from tool messages in state."""
@@ -65,6 +68,43 @@ def _extract_tool_results(state: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     return updates
+
+
+def _infer_tool_names(messages: list[Any]) -> list[str]:
+    """Infer high-level tool categories from tool message payloads."""
+    names: list[str] = []
+    mapping = {
+        "estadisticas": "calcular_estadisticas",
+        "plagio": "detectar_plagio",
+        "abandono": "analizar_abandono",
+        "tiempos": "analizar_tiempos",
+        "dificultad": "evaluar_dificultad",
+        "archivo": "extraer_datos_archivo",
+        "normalizacion": "normalizar_datos_examen",
+    }
+
+    for msg in messages:
+        if not isinstance(msg, ToolMessage):
+            continue
+        try:
+            data = json.loads(msg.content)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        tipo = data.get("tipo")
+        tool_name = mapping.get(tipo)
+        if tool_name and tool_name not in names:
+            names.append(tool_name)
+    return names
+
+
+def _infer_mode(state: Dict[str, Any]) -> str:
+    if state.get("file_path"):
+        return "file"
+    if state.get("exam_data") or state.get("students_data"):
+        return "full_exam"
+    if state.get("dni"):
+        return "individual"
+    return "conversational"
 
 
 @traceable(name="reflectionNode")
@@ -236,5 +276,20 @@ def reflection_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     if feedback_messages:
         result["messages"] = feedback_messages
+
+    # === Step 5: Persist learning memory for adaptive planning ===
+    if Config.LEARNING_MEMORY_ENABLED:
+        try:
+            tool_names = _infer_tool_names(messages)
+            if tool_names:
+                AuditStore().record_learning_batch(
+                    mode=_infer_mode(state),
+                    tool_names=tool_names,
+                    confidence_score=float(result["confidence_score"]),
+                    anomaly_detected=bool(extracted.get("anomalia_detectada")),
+                )
+        except Exception:
+            # Reflection must not fail due to memory persistence issues.
+            pass
 
     return result

@@ -12,6 +12,8 @@ from langchain_core.tools import tool as langgraph_tool
 from langgraph.prebuilt import InjectedState
 from langgraph.types import interrupt
 
+from agent.config import Config
+
 
 @langgraph_tool
 def tool_extraer_datos_archivo(
@@ -128,14 +130,28 @@ def tool_solicitar_clarificacion(
     """
     opciones_list = [o.strip() for o in opciones.split("|") if o.strip()] if opciones else []
 
-    respuesta = interrupt({
+    payload = {
         "tipo": "clarificacion",
         "pregunta": pregunta,
         "contexto": contexto,
         "opciones": opciones_list,
-    })
+    }
 
-    return f"El usuario respondió: {respuesta}"
+    if Config.ALLOW_HUMAN_INTERRUPT:
+        respuesta = interrupt(payload)
+        return f"El usuario respondió: {respuesta}"
+
+    # Autonomous default: avoid blocking the flow waiting for a user response.
+    fallback = opciones_list[0] if opciones_list else "continuar_con_mejor_esfuerzo"
+    return json.dumps(
+        {
+            "tipo": "clarificacion_no_bloqueante",
+            "pregunta": pregunta,
+            "fallback_aplicado": fallback,
+            "mensaje": "Se aplico fallback automatico para mantener autonomia.",
+        },
+        ensure_ascii=False,
+    )
 
 
 # === Internal parsing functions ===

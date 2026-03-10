@@ -22,14 +22,15 @@ from __future__ import annotations
 
 import json as _json
 from pathlib import Path
-from typing import Any, Dict
 import sys
+from typing import Any, cast
 
 from langchain_core.messages import ToolMessage as _ToolMessage
 from langgraph.graph import StateGraph, END, START
 from langgraph.prebuilt import ToolNode, tools_condition
 
 try:
+    from agent.config import Config
     from agent.state import AcademicAuditState
     from agent.nodes import (
         planner_node,
@@ -44,6 +45,7 @@ except ModuleNotFoundError:
     current_dir = Path(__file__).resolve().parent
     if str(current_dir) not in sys.path:
         sys.path.insert(0, str(current_dir))
+    from config import Config
     from state import AcademicAuditState
     from nodes import (
         planner_node,
@@ -61,18 +63,20 @@ except ModuleNotFoundError:
 # ============================================================================
 
 
-def route_after_validation(state: Dict[str, Any]) -> str:
+def route_after_validation(state: AcademicAuditState) -> str:
     """Route based on validation status."""
     if state.get("status") == "error":
         return END
     return "agent_reasoner"
 
 
-def route_after_reflection(state: Dict[str, Any]) -> str:
-    """Route after reflection - replan if confidence is too low.
+def route_after_reflection(state: AcademicAuditState) -> str:
+    """Route after reflection - replan via planner if confidence is too low.
 
     Only goes to verify/report if there's actual audit data.
     Conversational mode and failed extractions skip verify/report.
+    When confidence is low the full planner is re-invoked so the LLM
+    receives an updated plan enriched with reflection feedback.
     """
     # Must have actual analyzed data to produce a meaningful report
     has_audit_data = bool(
@@ -87,9 +91,28 @@ def route_after_reflection(state: Dict[str, Any]) -> str:
     confidence = state.get("confidence_score", 1.0)
     iteration = state.get("iteration_count", 0)
 
-    if confidence < 0.7 and iteration < 3:
-        return "agent_reasoner"
+    if confidence < 0.7 and iteration < Config.MAX_REFLECTION_REPLANS:
+        return "planner"  # true re-planning: planner rebuilds context with reflection notes
     return "verify"
+
+
+def route_after_planner(state: AcademicAuditState) -> str:
+    """Skip validation on replanning runs — data is already valid.
+
+    First run (iteration_count == 0): validate → agent_reasoner.
+    Subsequent runs triggered by reflection: go straight to agent_reasoner.
+    """
+    if state.get("iteration_count", 0) > 0:
+        return "agent_reasoner"
+    return "validate"
+
+
+def route_after_reasoner(state: AcademicAuditState) -> str:
+    """Route after reasoner with a hard stop to avoid endless loops."""
+    iteration = state.get("iteration_count", 0)
+    if iteration >= Config.MAX_AGENT_ITERATIONS:
+        return "__end__"
+    return tools_condition(cast(dict[str, Any], state))
 
 
 # ============================================================================
@@ -99,7 +122,7 @@ def route_after_reflection(state: Dict[str, Any]) -> str:
 _tool_node = ToolNode(AUDIT_TOOLS)
 
 
-def smart_tool_executor(state: Dict[str, Any]) -> Dict[str, Any]:
+def smart_tool_executor(state: AcademicAuditState) -> AcademicAuditState:
     """Execute tools and inject file/normalization data into state.
 
     Wraps the standard ToolNode. After executing tools, scans results
@@ -110,6 +133,8 @@ def smart_tool_executor(state: Dict[str, Any]) -> Dict[str, Any]:
 
     for msg in result.get("messages", []):
         if not isinstance(msg, _ToolMessage):
+            continue
+        if not isinstance(msg.content, str):
             continue
         try:
             data = _json.loads(msg.content)
@@ -173,9 +198,13 @@ workflow.add_node("report", report_node)
 
 # --- Edges ---
 
-# Entry: START → Planner → Validation
+# Entry: START → Planner → (first run: validate | replan: agent_reasoner)
 workflow.add_edge(START, "planner")
-workflow.add_edge("planner", "validate")
+workflow.add_conditional_edges(
+    "planner",
+    route_after_planner,
+    {"validate": "validate", "agent_reasoner": "agent_reasoner"},
+)
 
 # Validation: error → END, ok → agent loop
 workflow.add_conditional_edges(
@@ -187,16 +216,16 @@ workflow.add_conditional_edges(
 # Agent ReAct loop: agent_reasoner ⇄ tool_executor
 workflow.add_conditional_edges(
     "agent_reasoner",
-    tools_condition,
+    route_after_reasoner,
     {"tools": "tool_executor", "__end__": "reflection"},
 )
 workflow.add_edge("tool_executor", "agent_reasoner")
 
-# Reflection: replan → agent loop, conversational → END, audit → verify
+# Reflection: replan → planner (true re-plan), conversational → END, audit → verify
 workflow.add_conditional_edges(
     "reflection",
     route_after_reflection,
-    {"agent_reasoner": "agent_reasoner", "verify": "verify", END: END},
+    {"planner": "planner", "verify": "verify", END: END},
 )
 
 # Final: verify → report → END
@@ -212,9 +241,17 @@ graph = workflow.compile(
 
 
 def get_graph_with_memory():
-    """Compile the workflow with an in-memory checkpointer for standalone use."""
+    """Compile the workflow with an in-memory checkpointer for standalone use.
+
+    When ALLOW_HUMAN_INTERRUPT=true the graph pauses *before* agent_reasoner
+    on every iteration, allowing an external caller (e.g. Telegram bot) to
+    inspect/modify state and then resume by invoking the graph again with
+    the same thread_id.
+    """
     from langgraph.checkpoint.memory import MemorySaver
+    interrupt_nodes = ["agent_reasoner"] if Config.ALLOW_HUMAN_INTERRUPT else []
     return workflow.compile(
         checkpointer=MemorySaver(),
+        interrupt_before=interrupt_nodes or None,
         name="Nodaris Academic Auditor",
     )

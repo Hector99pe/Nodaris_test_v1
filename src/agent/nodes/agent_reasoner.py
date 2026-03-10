@@ -10,52 +10,12 @@ from typing import Any, Dict
 from langchain_core.messages import SystemMessage
 from langchain_openai import ChatOpenAI
 from langsmith import traceable
+from pydantic import SecretStr
 
 from agent.config import Config
+from agent.resilience import call_with_llm_circuit_breaker
 from agent.tools import AUDIT_TOOLS
-
-
-AGENT_SYSTEM_PROMPT = """Eres Nodaris, un agente experto en auditoría académica.
-
-## Tu Misión
-Auditar resultados académicos y generar registros verificables con trazabilidad criptográfica.
-
-## Cómo Operas
-1. Analiza el contexto y los datos disponibles
-2. Usa tus herramientas para realizar análisis específicos
-3. Evalúa los resultados de cada herramienta
-4. Decide si necesitas más análisis o si tienes suficiente información
-5. Cuando tengas suficiente información, genera un resumen claro de hallazgos
-
-## Herramientas Disponibles
-- **tool_calcular_estadisticas**: Calcula promedios, distribución de notas, nota máxima/mínima
-- **tool_detectar_plagio**: Compara respuestas entre estudiantes para detectar copias
-- **tool_analizar_abandono**: Identifica estudiantes que no respondieron (NR)
-- **tool_analizar_tiempos**: Detecta tiempos de respuesta sospechosamente cortos
-- **tool_evaluar_dificultad**: Evalúa dificultad real de cada pregunta
-- **tool_generar_hash**: Genera hash SHA-256 para verificación individual
-- **tool_extraer_datos_archivo**: Extrae datos de archivos Excel/PDF/JSON
-- **tool_normalizar_datos_examen**: Normaliza datos a formato estándar
-- **tool_solicitar_clarificacion**: Pregunta al usuario si algo no está claro
-
-## Escala de Notas (0-20)
-- 0-10: Desaprobado
-- 11-13: Aprobado
-- 14-16: Bueno
-- 17-18: Muy bueno
-- 19-20: Excelente
-
-## Reglas
-- SIEMPRE usa herramientas cuando haya datos que analizar. No inventes resultados.
-- Para exámenes completos: empieza con estadísticas, luego detección de anomalías.
-- Si hay 2+ estudiantes, SIEMPRE ejecuta detección de plagio.
-- Si los datos son ambiguos, usa tool_solicitar_clarificacion para preguntar.
-- Cuando termines todos los análisis, responde con un resumen estructurado.
-- Sé profesional, conciso y accionable en español.
-- NO repitas herramientas que ya ejecutaste salvo que tengas razón específica.
-
-## Contexto Actual
-{context}"""
+from agent.tools.prompts import build_agent_system_prompt
 
 
 def _build_context(state: Dict[str, Any]) -> str:
@@ -70,7 +30,7 @@ def _build_context(state: Dict[str, Any]) -> str:
     if exam_data:
         examen = exam_data.get("examen", {})
         preguntas = exam_data.get("preguntas", [])
-        parts.append(f"## Datos del Examen")
+        parts.append("## Datos del Examen")
         parts.append(f"- ID: {examen.get('id', 'N/A')}")
         parts.append(f"- Curso: {examen.get('curso', 'N/A')}")
         parts.append(f"- Preguntas: {len(preguntas)}")
@@ -83,13 +43,13 @@ def _build_context(state: Dict[str, Any]) -> str:
     dni = state.get("dni", "")
     if dni:
         nota = state.get("nota", -1)
-        parts.append(f"## Auditoría Individual")
+        parts.append("## Auditoría Individual")
         parts.append(f"- DNI: {dni}")
         parts.append(f"- Nota: {nota}")
 
     file_path = state.get("file_path", "")
     if file_path and not exam_data:
-        parts.append(f"## Archivo Pendiente")
+        parts.append("## Archivo Pendiente")
         parts.append(f"- Ruta: {file_path}")
         parts.append(f"- Tipo: {state.get('file_type', 'desconocido')}")
 
@@ -117,15 +77,17 @@ def agent_reasoner(state: Dict[str, Any]) -> Dict[str, Any]:
             "iteration_count": state.get("iteration_count", 0) + 1,
         }
 
+    api_key = SecretStr(Config.OPENAI_API_KEY) if Config.OPENAI_API_KEY else None
+
     llm = ChatOpenAI(
-        api_key=Config.OPENAI_API_KEY,
+        api_key=api_key,
         model=Config.OPENAI_MODEL,
         temperature=Config.OPENAI_TEMPERATURE,
     ).bind_tools(AUDIT_TOOLS)
 
     # Build the system prompt with current context
     context = _build_context(state)
-    system_prompt = AGENT_SYSTEM_PROMPT.replace("{context}", context)
+    system_prompt = build_agent_system_prompt(context)
     system_msg = SystemMessage(content=system_prompt)
 
     # Get existing messages (filter out old system messages to avoid duplication)
@@ -135,7 +97,9 @@ def agent_reasoner(state: Dict[str, Any]) -> Dict[str, Any]:
     ]
 
     # Invoke LLM
-    response = llm.invoke([system_msg] + existing_messages)
+    response = call_with_llm_circuit_breaker(
+        lambda: llm.invoke([system_msg] + existing_messages)
+    )
 
     iteration = state.get("iteration_count", 0) + 1
 

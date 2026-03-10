@@ -70,3 +70,7 @@ class AcademicAuditState(TypedDict, total=False):
 
     # === REPORT ===
     reporte_final: str
+
+    # === LEARNING MEMORY ===
+    learning_hint: str
+    learned_tools: List[str]

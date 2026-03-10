@@ -11,6 +11,7 @@ from langsmith import traceable
 
 from langchain_core.messages import HumanMessage, AIMessage
 from agent.graph.graph import get_graph_with_memory
+from agent.resilience import CircuitBreakerOpenError, format_llm_circuit_breaker_message
 
 # Use graph with memory checkpointer for conversation persistence
 _graph = get_graph_with_memory()
@@ -38,10 +39,13 @@ async def process_conversation(
     """
     config = {"configurable": {"thread_id": thread_id}}
 
-    result = await _graph.ainvoke(
-        {"messages": [HumanMessage(content=message)]},
-        config=config,
-    )
+    try:
+        result = await _graph.ainvoke(
+            {"messages": [HumanMessage(content=message)]},
+            config=config,
+        )
+    except CircuitBreakerOpenError as exc:
+        return format_llm_circuit_breaker_message(exc)
 
     # Return the last AI message (conversational responses)
     messages = result.get("messages", [])
