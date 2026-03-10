@@ -3,7 +3,11 @@
 Identifies and analyzes students who didn't complete the exam.
 """
 
-from typing import List, Dict, Any
+import json
+from typing import List, Dict, Any, Annotated
+
+from langchain_core.tools import tool as langgraph_tool
+from langgraph.prebuilt import InjectedState
 
 
 def identificar_nr(
@@ -126,28 +130,27 @@ def analizar_abandono(
     }
 
 
-def correlacionar_abandono_dificultad(
-    estudiantes_nr: List[Dict[str, Any]],
-    preguntas_dificiles: List[int]
-) -> Dict[str, Any]:
-    """Correlate abandonment with difficult questions.
+# === LangGraph Tool Wrapper ===
 
-    Args:
-        estudiantes_nr: Students with NR status
-        preguntas_dificiles: Indices of difficult questions
+@langgraph_tool
+def tool_analizar_abandono(
+    state: Annotated[dict, InjectedState] = None,  # type: ignore[assignment]
+) -> str:
+    """Analiza el abandono de estudiantes en el examen.
 
-    Returns:
-        Correlation analysis
+    Identifica estudiantes que no respondieron (NR) y calcula tasas de abandono.
+    Clasifica severidad: CRÍTICO (>=30%), ALTO (>=15%), MEDIO (>=5%), BAJO (<5%).
     """
-    if not estudiantes_nr or not preguntas_dificiles:
-        return {"correlacion": False, "mensaje": "Datos insuficientes para correlación"}
+    students_data = (state or {}).get("students_data", [])
+    if not students_data:
+        return json.dumps({"tipo": "abandono", "estudiantes_nr": [], "mensaje": "No hay datos de estudiantes"})
 
-    # This is a simplified correlation
-    # In a real implementation, you'd analyze which specific questions were left unanswered
+    estudiantes_nr = identificar_nr(students_data)
+    analisis = analizar_abandono(estudiantes_nr, len(students_data))
 
-    return {
-        "correlacion": True,
-        "mensaje": f"Se detectaron {len(estudiantes_nr)} abandonos en un examen con {len(preguntas_dificiles)} preguntas difíciles",
-        "hipotesis": "La dificultad del examen puede estar relacionada con la tasa de abandono",
-        "recomendacion": "Considerar ajustar la dificultad o el tiempo del examen"
-    }
+    return json.dumps({
+        "tipo": "abandono",
+        "estudiantes_nr": [e.get("dni", "") for e in estudiantes_nr],
+        "detalle_abandono": estudiantes_nr,
+        "analisis": analisis,
+    }, ensure_ascii=False)

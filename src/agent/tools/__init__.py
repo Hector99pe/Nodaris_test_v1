@@ -1,61 +1,41 @@
-"""Tools and utilities for Nodaris agent."""
+"""Tools for Nodaris agent."""
 
-# Legacy tools
 from agent.tools.crypto import generate_verification_hash
-from agent.tools.prompts import build_audit_prompt
+from agent.tools.detectar_copia import tool_detectar_plagio
+from agent.tools.analizar_abandono import tool_analizar_abandono
+from agent.tools.tiempos import tool_analizar_tiempos
+from agent.tools.dificultad import tool_evaluar_dificultad
+from agent.tools.crypto import tool_generar_hash
+from agent.tools.validacion import tool_calcular_estadisticas
+from agent.tools.file_parser import (
+    tool_extraer_datos_archivo,
+    tool_normalizar_datos_examen,
+    tool_solicitar_clarificacion,
+)
 
-# New tools
-from agent.tools.dificultad import evaluar_dificultad, analizar_distribucion_dificultad
-from agent.tools.copia import copiar_examen, respaldar_datos
-from agent.tools.tiempos import (
-    calcular_tiempo_restante,
-    validar_tiempo_examen,
-    estimar_tiempo_por_pregunta,
-    TiempoExamen
-)
-from agent.tools.validacion import (
-    validar_dni,
-    validar_nota,
-    validar_estructura_examen,
-    validar_respuestas
-)
-from agent.tools.detectar_copia import (
-    detectar_copia,
-    calcular_similitud,
-    analizar_patrones_copia
-)
-from agent.tools.analizar_abandono import (
-    identificar_nr,
-    analizar_abandono,
-    correlacionar_abandono_dificultad
-)
+# All tools available for the agentic loop (bind_tools / ToolNode)
+AUDIT_TOOLS = [
+    tool_calcular_estadisticas,
+    tool_detectar_plagio,
+    tool_analizar_abandono,
+    tool_analizar_tiempos,
+    tool_evaluar_dificultad,
+    tool_generar_hash,
+    tool_extraer_datos_archivo,
+    tool_normalizar_datos_examen,
+    tool_solicitar_clarificacion,
+]
 
 __all__ = [
-    # Legacy
     "generate_verification_hash",
-    "build_audit_prompt",
-    # Difficulty
-    "evaluar_dificultad",
-    "analizar_distribucion_dificultad",
-    # Copy
-    "copiar_examen",
-    "respaldar_datos",
-    # Time
-    "calcular_tiempo_restante",
-    "validar_tiempo_examen",
-    "estimar_tiempo_por_pregunta",
-    "TiempoExamen",
-    # Validation
-    "validar_dni",
-    "validar_nota",
-    "validar_estructura_examen",
-    "validar_respuestas",
-    # Plagiarism detection
-    "detectar_copia",
-    "calcular_similitud",
-    "analizar_patrones_copia",
-    # Abandonment analysis
-    "identificar_nr",
-    "analizar_abandono",
-    "correlacionar_abandono_dificultad",
+    "AUDIT_TOOLS",
+    "tool_calcular_estadisticas",
+    "tool_detectar_plagio",
+    "tool_analizar_abandono",
+    "tool_analizar_tiempos",
+    "tool_evaluar_dificultad",
+    "tool_generar_hash",
+    "tool_extraer_datos_archivo",
+    "tool_normalizar_datos_examen",
+    "tool_solicitar_clarificacion",
 ]

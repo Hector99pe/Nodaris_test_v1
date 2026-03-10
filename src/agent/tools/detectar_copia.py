@@ -3,8 +3,12 @@
 Analyzes answer similarity to identify potential cheating.
 """
 
-from typing import List, Dict, Any
+import json
+from typing import List, Dict, Any, Annotated
 from difflib import SequenceMatcher
+
+from langchain_core.tools import tool as langgraph_tool
+from langgraph.prebuilt import InjectedState
 
 
 def calcular_similitud(texto1: str, texto2: str) -> float:
@@ -136,3 +140,33 @@ def analizar_patrones_copia(
         "nivel_general": nivel_general,
         "requiere_investigacion": nivel_general in ["CRÍTICO", "ALTO"]
     }
+
+
+# === LangGraph Tool Wrapper ===
+
+@langgraph_tool
+def tool_detectar_plagio(
+    umbral: float = 0.85,
+    state: Annotated[dict, InjectedState] = None,  # type: ignore[assignment]
+) -> str:
+    """Detecta plagio entre estudiantes comparando sus respuestas del examen.
+
+    Compara las respuestas de cada par de estudiantes y calcula similitud.
+    Usar cuando hay 2 o más estudiantes en el examen.
+
+    Args:
+        umbral: Umbral de similitud (0-1) para considerar copia. Default 0.85
+    """
+    students_data = (state or {}).get("students_data", [])
+    if len(students_data) < 2:
+        return json.dumps({"tipo": "plagio", "copias_detectadas": [], "mensaje": "Se necesitan al menos 2 estudiantes"})
+
+    copias = detectar_copia(students_data, umbral)
+    patrones = analizar_patrones_copia(copias)
+
+    return json.dumps({
+        "tipo": "plagio",
+        "copias_detectadas": copias,
+        "patrones": patrones,
+        "total_casos": len(copias),
+    }, ensure_ascii=False)

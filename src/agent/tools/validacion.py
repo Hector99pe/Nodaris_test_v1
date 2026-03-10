@@ -1,131 +1,59 @@
-"""Tool for validating academic data.
+"""Tool for calculating exam statistics."""
 
-Provides validation utilities for exams, grades, and student data.
-"""
+import json
+from typing import Any, Annotated
 
-import re
-from typing import Dict, List, Optional, Tuple, Any
+from langchain_core.tools import tool as langgraph_tool
+from langgraph.prebuilt import InjectedState
 
 
-def validar_dni(dni: str) -> Tuple[bool, str]:
-    """Validate Peruvian DNI format.
+# === LangGraph Tool Wrappers ===
 
-    Args:
-        dni: DNI string to validate
+@langgraph_tool
+def tool_calcular_estadisticas(
+    state: Annotated[dict, InjectedState] = None,  # type: ignore[assignment]
+) -> str:
+    """Calcula estadísticas del examen: notas individuales, promedio, y distribución.
 
-    Returns:
-        Tuple of (is_valid, error_message)
+    Usa las respuestas correctas para calcular nota de cada estudiante.
+    Genera distribución por rangos: 0-10, 11-13, 14-16, 17-20.
     """
-    if not dni:
-        return False, "DNI no puede estar vacío"
+    state = state or {}
+    exam_data = state.get("exam_data", {})
+    students_data = state.get("students_data", [])
 
-    # Remove whitespace
-    dni = dni.strip()
+    preguntas = exam_data.get("preguntas", []) if exam_data else []
+    correctas = [str(p.get("correcta", "")).upper() for p in preguntas if isinstance(p, dict)]
 
-    # Check if it's 8 digits
-    if not re.match(r'^\d{8}$', dni):
-        return False, "DNI debe tener exactamente 8 dígitos"
+    if not correctas or not students_data:
+        return json.dumps({"tipo": "estadisticas", "promedio": 0, "mensaje": "Datos insuficientes"})
 
-    return True, ""
+    notas = []
+    for student in students_data:
+        respuestas = student.get("respuestas", [])
+        aciertos = sum(
+            1 for i, r in enumerate(respuestas[:len(correctas)])
+            if str(r).upper() == correctas[i]
+        )
+        nota_20 = round((aciertos / len(correctas)) * 20, 2) if correctas else 0
+        notas.append({"dni": student.get("dni", ""), "nota": nota_20, "aciertos": aciertos})
 
+    valores = [n["nota"] for n in notas]
+    promedio = round(sum(valores) / len(valores), 2) if valores else 0.0
 
-def validar_nota(nota: int, escala_min: int = 0, escala_max: int = 20) -> Tuple[bool, str]:
-    """Validate academic grade.
-
-    Args:
-        nota: Grade to validate
-        escala_min: Minimum valid grade
-        escala_max: Maximum valid grade
-
-    Returns:
-        Tuple of (is_valid, error_message)
-    """
-    if not isinstance(nota, (int, float)):
-        return False, "La nota debe ser un número"
-
-    if nota < escala_min or nota > escala_max:
-        return False, f"La nota debe estar entre {escala_min} y {escala_max}"
-
-    return True, ""
-
-
-def validar_estructura_examen(examen: Dict) -> Dict[str, Any]:
-    """Validate exam data structure.
-
-    Args:
-        examen: Exam dictionary to validate
-
-    Returns:
-        Dictionary with validation results
-    """
-    errores = []
-    advertencias = []
-
-    # Required fields
-    campos_requeridos = ["titulo", "preguntas", "duracion"]
-    for campo in campos_requeridos:
-        if campo not in examen:
-            errores.append(f"Campo requerido faltante: {campo}")
-
-    # Validate questions
-    if "preguntas" in examen:
-        preguntas = examen["preguntas"]
-        if not isinstance(preguntas, list):
-            errores.append("'preguntas' debe ser una lista")
-        elif len(preguntas) == 0:
-            advertencias.append("El examen no tiene preguntas")
-        else:
-            for i, pregunta in enumerate(preguntas):
-                if not isinstance(pregunta, dict):
-                    errores.append(f"Pregunta {i+1} tiene formato inválido")
-                elif "texto" not in pregunta:
-                    errores.append(f"Pregunta {i+1} no tiene texto")
-
-    # Validate duration
-    if "duracion" in examen:
-        duracion = examen["duracion"]
-        if not isinstance(duracion, (int, float)) or duracion <= 0:
-            errores.append("La duración debe ser un número positivo")
-
-    return {
-        "valido": len(errores) == 0,
-        "errores": errores,
-        "advertencias": advertencias
+    distribucion = {
+        "0-10": sum(1 for v in valores if v <= 10),
+        "11-13": sum(1 for v in valores if 11 <= v <= 13),
+        "14-16": sum(1 for v in valores if 14 <= v <= 16),
+        "17-20": sum(1 for v in valores if v >= 17),
     }
 
-
-def validar_respuestas(
-    respuestas: List[Dict],
-    preguntas: List[Dict]
-) -> Dict[str, Any]:
-    """Validate student answers against questions.
-
-    Args:
-        respuestas: List of student answers
-        preguntas: List of exam questions
-
-    Returns:
-        Dictionary with validation results
-    """
-    if len(respuestas) != len(preguntas):
-        return {
-            "valido": False,
-            "mensaje": f"Número de respuestas ({len(respuestas)}) no coincide con preguntas ({len(preguntas)})"
-        }
-
-    respuestas_validas = 0
-    respuestas_vacias = 0
-
-    for i, (respuesta, pregunta) in enumerate(zip(respuestas, preguntas)):
-        if not respuesta.get("texto"):
-            respuestas_vacias += 1
-        else:
-            respuestas_validas += 1
-
-    return {
-        "valido": True,
-        "total_preguntas": len(preguntas),
-        "respuestas_validas": respuestas_validas,
-        "respuestas_vacias": respuestas_vacias,
-        "porcentaje_completado": round(respuestas_validas / len(preguntas) * 100, 2)
-    }
+    return json.dumps({
+        "tipo": "estadisticas",
+        "promedio": promedio,
+        "distribucion": distribucion,
+        "notas_individuales": notas,
+        "total_estudiantes": len(notas),
+        "nota_maxima": max(valores) if valores else 0,
+        "nota_minima": min(valores) if valores else 0,
+    }, ensure_ascii=False)

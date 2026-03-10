@@ -2,116 +2,71 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
+from typing import Any, Annotated, List, Dict
 from typing_extensions import TypedDict
 
-
-class Context(TypedDict):
-    """Runtime configuration context.
-
-    Configurable parameters passed at assistant creation or invocation.
-    """
-
-    openai_model: str  # e.g., "gpt-4", "gpt-3.5-turbo"
-    temperature: float  # LLM temperature for analysis
+from langgraph.graph.message import add_messages
 
 
-@dataclass
-class AcademicAuditState:
+class AcademicAuditState(TypedDict, total=False):
     """State for academic audit workflow.
 
     Supports two modes:
     1. Individual student audit (dni + nota)
     2. Full exam audit (exam_data with multiple students)
+    3. File-based audit (Excel/PDF/JSON)
 
-    Attributes:
-        # Individual mode
-        dni: Student identification number
-        nota: Academic grade (0-20 scale)
-
-        # Exam mode
-        exam_data: Complete exam data with questions and answers
-        students_data: List of student responses
-
-        # Query
-        usuario_query: User question from interface
-
-        # Planning
-        plan: Execution plan from planner node
-        analysis_to_run: List of analysis types to execute
-
-        # Processing results
-        status: Audit status (ok, error, warning)
-        mensaje: Status message
-
-        # Analysis results
-        analisis: Main LLM-generated analysis
-        anomalia_detectada: Whether inconsistencies were detected
-
-        # Specific detections
-        copias_detectadas: List of potential plagiarism cases
-        tiempos_sospechosos: Students with suspicious timing
-        respuestas_nr: Students who didn't respond (NR)
-
-        # Statistics
-        promedio: Average grade
-        preguntas_dificiles: Count of difficult questions
-        distribucion_notas: Grade distribution
-
-        # Verification
-        hash: SHA-256 verification hash
-        timestamp: Audit timestamp
-
-        # Reflection
-        reflection_notes: Insights from reflection node
-        confidence_score: Confidence in audit results (0-1)
-
-        # Report
-        reporte_final: Final formatted report
+    Uses TypedDict with add_messages reducer for agentic loop.
+    All fields are optional (total=False) so nodes only return what they update.
     """
 
-    # === INPUT FIELDS ===
-    # Individual mode
-    dni: str = ""
-    nota: int = -1
+    # === CORE: Agentic conversation ===
+    messages: Annotated[list, add_messages]
 
-    # Exam mode
-    exam_data: Optional[Dict[str, Any]] = None
-    students_data: List[Dict[str, Any]] = field(default_factory=list)
+    # === INPUT: Individual mode ===
+    dni: str
+    nota: int
 
-    # Query
-    usuario_query: str = ""
+    # === INPUT: Exam mode ===
+    exam_data: Dict[str, Any]
+    students_data: List[Dict[str, Any]]
+
+    # === INPUT: File mode ===
+    file_path: str
+    file_type: str
+
+    # === INPUT: Query ===
+    usuario_query: str
 
     # === PLANNING ===
-    plan: str = ""
-    analysis_to_run: List[str] = field(default_factory=list)
+    plan: str
 
     # === PROCESSING ===
-    status: str = ""
-    mensaje: str = ""
+    status: str
+    mensaje: str
 
     # === ANALYSIS RESULTS ===
-    analisis: str = ""
-    anomalia_detectada: bool = False
+    analisis: str
+    anomalia_detectada: bool
 
     # Specific detections
-    copias_detectadas: List[Dict[str, Any]] = field(default_factory=list)
-    tiempos_sospechosos: List[str] = field(default_factory=list)
-    respuestas_nr: List[str] = field(default_factory=list)
+    copias_detectadas: List[Dict[str, Any]]
+    tiempos_sospechosos: List[str]
+    respuestas_nr: List[str]
 
     # Statistics
-    promedio: float = 0.0
-    preguntas_dificiles: int = 0
-    distribucion_notas: Dict[str, int] = field(default_factory=dict)
+    promedio: float
+    preguntas_dificiles: int
+    distribucion_notas: Dict[str, int]
 
     # === VERIFICATION ===
-    hash: str = ""
-    timestamp: str = ""
+    hash: str
+    timestamp: str
 
     # === REFLECTION ===
-    reflection_notes: str = ""
-    confidence_score: float = 0.0
+    reflection_notes: str
+    confidence_score: float
+    iteration_count: int
 
     # === REPORT ===
-    reporte_final: str = ""
+    reporte_final: str

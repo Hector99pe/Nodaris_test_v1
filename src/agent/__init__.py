@@ -22,7 +22,7 @@ _env_path = _project_root / ".env"
 load_dotenv(_env_path)
 
 from agent.graph import graph
-from agent.state import AcademicAuditState, Context
+from agent.state import AcademicAuditState
 from agent.config import Config
 
-__all__ = ["graph", "AcademicAuditState", "Context", "Config"]
+__all__ = ["graph", "AcademicAuditState", "Config"]

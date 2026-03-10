@@ -4,12 +4,12 @@ Generates professional audit reports.
 """
 
 from datetime import datetime
+from typing import Dict, Any
 from langsmith import traceable
-from agent.state import AcademicAuditState
 
 
 @traceable(name="reportNode")
-def report_node(state: AcademicAuditState) -> AcademicAuditState:
+def report_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Generate final audit report.
 
     Creates a professional, structured report with:
@@ -20,10 +20,10 @@ def report_node(state: AcademicAuditState) -> AcademicAuditState:
     - Verification hash
 
     Args:
-        state: Current workflow state
+        state: Current workflow state (TypedDict)
 
     Returns:
-        Updated state with formatted report
+        Dict with reporte_final, status, and mensaje
     """
     report_sections = []
 
@@ -34,14 +34,16 @@ def report_node(state: AcademicAuditState) -> AcademicAuditState:
     report_sections.append("")
 
     # Timestamp
-    if state.timestamp:
-        report_sections.append(f"🕐 Fecha: {state.timestamp}")
+    timestamp = state.get("timestamp", "")
+    if timestamp:
+        report_sections.append(f"🕐 Fecha: {timestamp}")
     else:
         report_sections.append(f"🕐 Fecha: {datetime.now().isoformat()}")
 
     # Verification hash
-    if state.hash:
-        report_sections.append(f"🔐 Hash de verificación: {state.hash[:16]}...")
+    hash_val = state.get("hash", "")
+    if hash_val:
+        report_sections.append(f"🔐 Hash de verificación: {hash_val[:16]}...")
 
     report_sections.append("")
 
@@ -51,66 +53,78 @@ def report_node(state: AcademicAuditState) -> AcademicAuditState:
     report_sections.append("─" * 70)
     report_sections.append("")
 
-    # Mode and scope
-    if state.exam_data or state.students_data:
-        num_students = len(state.students_data)
+    exam_data = state.get("exam_data") or {}
+    students_data = state.get("students_data") or []
+
+    if exam_data or students_data:
+        num_students = len(students_data)
         report_sections.append("Tipo: Auditoría de examen completo")
         report_sections.append(f"Estudiantes analizados: {num_students}")
 
-        if state.exam_data:
-            titulo = state.exam_data.get("titulo", "Sin título")
+        if exam_data:
+            examen_info = exam_data.get("examen", {})
+            titulo = examen_info.get("curso", exam_data.get("titulo", "Sin título"))
+            exam_id = examen_info.get("id", "")
+            if exam_id:
+                titulo = f"{titulo} ({exam_id})"
             report_sections.append(f"Examen: {titulo}")
     else:
         report_sections.append("Tipo: Auditoría individual")
-        if state.dni:
-            report_sections.append(f"Estudiante: DNI {state.dni}")
-            report_sections.append(f"Nota: {state.nota}")
+        dni = state.get("dni", "")
+        if dni:
+            report_sections.append(f"Estudiante: DNI {dni}")
+            report_sections.append(f"Nota: {state.get('nota', 0)}")
 
     report_sections.append("")
 
     # Status
+    status = state.get("status", "ok")
     status_emoji = {
         "ok": "✅",
         "error": "❌",
         "warning": "⚠️",
         "planned": "📝"
-    }.get(state.status, "ℹ️")
+    }.get(status, "ℹ️")
 
-    report_sections.append(f"Estado: {status_emoji} {state.status.upper()}")
-    if state.mensaje:
-        report_sections.append(f"Mensaje: {state.mensaje}")
+    report_sections.append(f"Estado: {status_emoji} {status.upper()}")
+    mensaje = state.get("mensaje", "")
+    if mensaje:
+        report_sections.append(f"Mensaje: {mensaje}")
 
     report_sections.append("")
 
     # === STATISTICS ===
-    if state.promedio > 0 or state.distribucion_notas:
+    promedio = state.get("promedio", 0.0)
+    distribucion_notas = state.get("distribucion_notas") or {}
+    preguntas_dificiles = state.get("preguntas_dificiles", 0)
+
+    if promedio > 0 or distribucion_notas:
         report_sections.append("─" * 70)
         report_sections.append("📊 ESTADÍSTICAS")
         report_sections.append("─" * 70)
         report_sections.append("")
 
-        if state.promedio > 0:
-            report_sections.append(f"Promedio general: {state.promedio:.2f}")
+        if promedio > 0:
+            report_sections.append(f"Promedio general: {promedio:.2f}")
 
-            # Grade interpretation
-            if state.promedio >= 17:
+            if promedio >= 17:
                 interpretacion = "Excelente"
-            elif state.promedio >= 14:
+            elif promedio >= 14:
                 interpretacion = "Bueno"
-            elif state.promedio >= 11:
+            elif promedio >= 11:
                 interpretacion = "Aprobado"
             else:
                 interpretacion = "Desaprobado"
             report_sections.append(f"Clasificación: {interpretacion}")
 
-        if state.preguntas_dificiles > 0:
-            report_sections.append(f"Preguntas difíciles: {state.preguntas_dificiles}")
+        if preguntas_dificiles > 0:
+            report_sections.append(f"Preguntas difíciles: {preguntas_dificiles}")
 
-        if state.distribucion_notas:
+        if distribucion_notas:
             report_sections.append("")
             report_sections.append("Distribución de notas:")
-            for rango, cantidad in sorted(state.distribucion_notas.items()):
-                bar = "█" * (cantidad // 2)  # Visual bar
+            for rango, cantidad in sorted(distribucion_notas.items()):
+                bar = "█" * (cantidad // 2)
                 report_sections.append(f"  {rango}: {cantidad:3d} {bar}")
 
         report_sections.append("")
@@ -118,48 +132,49 @@ def report_node(state: AcademicAuditState) -> AcademicAuditState:
     # === FINDINGS / ANOMALÍAS ===
     findings = []
 
-    # Plagiarism
-    if state.copias_detectadas:
+    copias_detectadas = state.get("copias_detectadas") or []
+    respuestas_nr = state.get("respuestas_nr") or []
+    tiempos_sospechosos = state.get("tiempos_sospechosos") or []
+
+    if copias_detectadas:
         findings.append("🔍 DETECCIÓN DE COPIAS")
         findings.append("")
-        findings.append(f"Total de casos sospechosos: {len(state.copias_detectadas)}")
+        findings.append(f"Total de casos sospechosos: {len(copias_detectadas)}")
 
-        for i, caso in enumerate(state.copias_detectadas[:5], 1):  # Top 5
+        for i, caso in enumerate(copias_detectadas[:5], 1):
             nivel_emoji = "🔴" if caso.get("nivel_sospecha") == "ALTO" else "🟡"
             findings.append(
-                f"  {nivel_emoji} Caso {i}: {caso['estudiante1']} ↔ {caso['estudiante2']}"
+                f"  {nivel_emoji} Caso {i}: {caso.get('estudiante1', '?')} ↔ {caso.get('estudiante2', '?')}"
             )
             findings.append(
-                f"     Similitud: {caso['similitud_promedio']:.1%} en {caso['preguntas_similares']} preguntas"
+                f"     Similitud: {caso.get('similitud_promedio', 0):.1%} en {caso.get('preguntas_similares', 0)} preguntas"
             )
 
-        if len(state.copias_detectadas) > 5:
-            findings.append(f"  ... y {len(state.copias_detectadas) - 5} casos más")
+        if len(copias_detectadas) > 5:
+            findings.append(f"  ... y {len(copias_detectadas) - 5} casos más")
 
         findings.append("")
 
-    # Abandonment
-    if state.respuestas_nr:
+    if respuestas_nr:
         findings.append("⚠️ ABANDONO (NR)")
         findings.append("")
-        findings.append(f"Estudiantes con respuestas vacías: {len(state.respuestas_nr)}")
+        findings.append(f"Estudiantes con respuestas vacías: {len(respuestas_nr)}")
 
-        for dni in state.respuestas_nr[:10]:  # Show first 10
-            findings.append(f"  • {dni}")
+        for dni_nr in respuestas_nr[:10]:
+            findings.append(f"  • {dni_nr}")
 
-        if len(state.respuestas_nr) > 10:
-            findings.append(f"  ... y {len(state.respuestas_nr) - 10} más")
+        if len(respuestas_nr) > 10:
+            findings.append(f"  ... y {len(respuestas_nr) - 10} más")
 
         findings.append("")
 
-    # Suspicious timing
-    if state.tiempos_sospechosos:
+    if tiempos_sospechosos:
         findings.append("⏱️ TIEMPOS SOSPECHOSOS")
         findings.append("")
-        findings.append(f"Estudiantes con tiempos anómalos: {len(state.tiempos_sospechosos)}")
+        findings.append(f"Estudiantes con tiempos anómalos: {len(tiempos_sospechosos)}")
 
-        for dni in state.tiempos_sospechosos[:10]:
-            findings.append(f"  • {dni}")
+        for dni_ts in tiempos_sospechosos[:10]:
+            findings.append(f"  • {dni_ts}")
 
         findings.append("")
 
@@ -171,21 +186,23 @@ def report_node(state: AcademicAuditState) -> AcademicAuditState:
         report_sections.extend(findings)
 
     # === ANALYSIS ===
-    if state.analisis:
+    analisis = state.get("analisis", "")
+    if analisis:
         report_sections.append("─" * 70)
         report_sections.append("🤖 ANÁLISIS DETALLADO")
         report_sections.append("─" * 70)
         report_sections.append("")
-        report_sections.append(state.analisis)
+        report_sections.append(analisis)
         report_sections.append("")
 
     # === REFLECTION ===
-    if state.reflection_notes:
+    reflection_notes = state.get("reflection_notes", "")
+    if reflection_notes:
         report_sections.append("─" * 70)
         report_sections.append("🔎 EVALUACIÓN DE CALIDAD")
         report_sections.append("─" * 70)
         report_sections.append("")
-        report_sections.append(state.reflection_notes)
+        report_sections.append(reflection_notes)
         report_sections.append("")
 
     # === RECOMMENDATIONS ===
@@ -196,27 +213,26 @@ def report_node(state: AcademicAuditState) -> AcademicAuditState:
 
     recommendations = []
 
-    # Based on findings
-    if state.copias_detectadas:
-        if any(c.get("nivel_sospecha") == "ALTO" for c in state.copias_detectadas):
+    if copias_detectadas:
+        if any(c.get("nivel_sospecha") == "ALTO" for c in copias_detectadas):
             recommendations.append("• URGENTE: Investigar casos de copia de alto riesgo")
         recommendations.append("• Revisar manualmente las respuestas similares detectadas")
         recommendations.append("• Considerar medidas anti-fraude para futuros exámenes")
 
-    if state.respuestas_nr:
-        tasa = (len(state.respuestas_nr) / len(state.students_data)) * 100 if state.students_data else 0
+    if respuestas_nr:
+        tasa = (len(respuestas_nr) / len(students_data)) * 100 if students_data else 0
         if tasa > 20:
             recommendations.append("• CRÍTICO: Tasa de abandono alta - Revisar dificultad del examen")
         recommendations.append("• Realizar seguimiento con estudiantes que no respondieron")
 
-    if state.tiempos_sospechosos:
+    if tiempos_sospechosos:
         recommendations.append("• Analizar tiempos de respuesta anómalos")
 
-    if state.preguntas_dificiles > 5:
+    if preguntas_dificiles > 5:
         recommendations.append("• Considerar el balance de dificultad del examen")
 
-    # Based on confidence
-    if state.confidence_score < 0.7:
+    confidence_score = state.get("confidence_score", 0.0)
+    if confidence_score < 0.7:
         recommendations.append("• Revisar manualmente este análisis - confianza media/baja")
 
     if not recommendations:
@@ -228,16 +244,14 @@ def report_node(state: AcademicAuditState) -> AcademicAuditState:
 
     # === FOOTER ===
     report_sections.append("=" * 70)
-    report_sections.append(f"Confianza del análisis: {state.confidence_score:.1%}".center(70))
+    report_sections.append(f"Confianza del análisis: {confidence_score:.1%}".center(70))
     report_sections.append("Generado por Nodaris Academic Auditor".center(70))
     report_sections.append("=" * 70)
 
-    # Build final report
     final_report = "\n".join(report_sections)
 
-    # Update state
-    state.reporte_final = final_report
-    state.status = "completed"
-    state.mensaje = "Reporte generado exitosamente"
-
-    return state
+    return {
+        "reporte_final": final_report,
+        "status": "completed",
+        "mensaje": "Reporte generado exitosamente",
+    }

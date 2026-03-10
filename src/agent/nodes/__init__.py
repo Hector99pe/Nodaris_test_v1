@@ -2,19 +2,19 @@
 
 # Core nodes
 from agent.nodes.validation import validate_academic_data
-from agent.nodes.analysis import analyze_with_llm
 from agent.nodes.verification import generate_verification
 
-# New nodes
+# Agentic nodes
 from agent.nodes.planner import planner_node
+from agent.nodes.agent_reasoner import agent_reasoner
 from agent.nodes.reflection import reflection_node
 from agent.nodes.report import report_node
 
 __all__ = [
     "validate_academic_data",
-    "analyze_with_llm",
     "generate_verification",
     "planner_node",
+    "agent_reasoner",
     "reflection_node",
     "report_node",
 ]
