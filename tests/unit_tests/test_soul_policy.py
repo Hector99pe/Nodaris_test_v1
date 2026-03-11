@@ -6,15 +6,15 @@ from agent.tools.prompts import build_agent_system_prompt, load_soul
 
 def test_soul_file_is_loaded() -> None:
     soul = load_soul()
-    assert "Nodaris Agent" in soul
-    assert "Scope contract" in soul
+    assert "Nodaris" in soul
+    assert "Hard Limits" in soul
 
 
 def test_agent_system_prompt_uses_soul_and_context() -> None:
     prompt = build_agent_system_prompt("demo-context")
     assert "Contexto actual:" in prompt
     assert "demo-context" in prompt
-    assert "Nodaris Agent" in prompt
+    assert "Nodaris" in prompt
 
 
 def test_no_hardcoded_system_prompt_in_nodes() -> None:

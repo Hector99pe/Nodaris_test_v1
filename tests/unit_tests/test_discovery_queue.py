@@ -22,6 +22,22 @@ def test_discovery_enqueues_supported_files(monkeypatch, tmp_path: Path) -> None
     assert len(result["discovered_jobs"]) == 2
 
 
+def test_discovery_does_not_reenqueue_existing_file(monkeypatch, tmp_path: Path) -> None:
+    inbox = tmp_path / "inbox"
+    inbox.mkdir(parents=True, exist_ok=True)
+    (inbox / "same_exam.json").write_text("{}", encoding="utf-8")
+
+    db_path = tmp_path / "audits.db"
+    monkeypatch.setattr("agent.nodes.discovery.Config.AUTONOMY_INBOX_PATH", str(inbox))
+    monkeypatch.setattr("agent.nodes.discovery.AuditStore", lambda: AuditStore(str(db_path)))
+
+    first = discovery_node({})
+    second = discovery_node({})
+
+    assert len(first["discovered_jobs"]) == 1
+    assert len(second["discovered_jobs"]) == 0
+
+
 def test_claim_next_job_prioritizes_higher_risk(tmp_path: Path) -> None:
     store = AuditStore(str(tmp_path / "priority.db"))
     low = tmp_path / "low.json"

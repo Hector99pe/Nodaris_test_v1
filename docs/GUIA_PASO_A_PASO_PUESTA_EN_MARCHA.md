@@ -112,6 +112,11 @@ Comandos útiles dentro de Telegram:
 - /help
 - /auditar 12345678 15
 - /auditorias
+- /reporte 50
+- /reporte examen EX-TEST-004
+- /reporte dni 73333444
+- /reporte alumno Javier
+- /revision
 - /stats
 - /estado
 

@@ -353,6 +353,16 @@ class AuditStore:
                     raise
                 return int(row["id"])
 
+    def has_job_for_source(self, file_path: str) -> bool:
+        """Return True if a job already exists for the given file path."""
+        source_ref = str(Path(file_path).resolve())
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM audit_jobs WHERE source_ref = ? LIMIT 1",
+                (source_ref,),
+            ).fetchone()
+        return row is not None
+
     def claim_next_job(self) -> Dict[str, Any] | None:
         """Claim one pending job atomically and mark it as running."""
         now = datetime.now(timezone.utc).isoformat()
@@ -631,6 +641,144 @@ class AuditStore:
             )
         return items
 
+    def get_audit_report_by_id(self, audit_id: int) -> Dict[str, Any] | None:
+        """Return one persisted audit report by id, including full report text."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, created_at, status, confidence_score, audit_hash,
+                       input_mode, exam_id, dni, report_text
+                FROM audits
+                WHERE id = ?
+                LIMIT 1
+                """,
+                (int(audit_id),),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": int(row["id"]),
+            "created_at": str(row["created_at"]),
+            "status": row["status"],
+            "confidence_score": float(row["confidence_score"]) if row["confidence_score"] is not None else None,
+            "audit_hash": str(row["audit_hash"] or ""),
+            "input_mode": row["input_mode"],
+            "exam_id": row["exam_id"],
+            "dni": row["dni"],
+            "report_text": str(row["report_text"] or ""),
+        }
+
+    def find_audits(
+        self,
+        *,
+        exam_id: str | None = None,
+        dni: str | None = None,
+        hash_prefix: str | None = None,
+        alumno: str | None = None,
+        limit: int = 10,
+    ) -> list[Dict[str, Any]]:
+        """Find audits by exam_id, dni, hash prefix or alumno token over report text."""
+        safe_limit = max(1, int(limit))
+        clauses: list[str] = []
+        params: list[Any] = []
+
+        if exam_id:
+            clauses.append("LOWER(COALESCE(exam_id, '')) = LOWER(?)")
+            params.append(str(exam_id).strip())
+        if dni:
+            clauses.append("COALESCE(dni, '') = ?")
+            params.append(str(dni).strip())
+        if hash_prefix:
+            clauses.append("LOWER(COALESCE(audit_hash, '')) LIKE LOWER(?)")
+            params.append(f"{str(hash_prefix).strip()}%")
+        if alumno:
+            token = str(alumno).strip()
+            clauses.append("LOWER(COALESCE(report_text, '')) LIKE LOWER(?)")
+            params.append(f"%{token}%")
+
+        where_sql = " AND ".join(clauses) if clauses else "1=1"
+        query = f"""
+            SELECT id, created_at, status, confidence_score, audit_hash,
+                   input_mode, exam_id, dni, report_text
+            FROM audits
+            WHERE {where_sql}
+            ORDER BY id DESC
+            LIMIT ?
+        """
+        params.append(safe_limit)
+
+        with self._connect() as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+
+        items: list[Dict[str, Any]] = []
+        for row in rows:
+            items.append(
+                {
+                    "id": int(row["id"]),
+                    "created_at": str(row["created_at"]),
+                    "status": row["status"],
+                    "confidence_score": float(row["confidence_score"]) if row["confidence_score"] is not None else None,
+                    "audit_hash": str(row["audit_hash"] or ""),
+                    "input_mode": row["input_mode"],
+                    "exam_id": row["exam_id"],
+                    "dni": row["dni"],
+                    "report_text": str(row["report_text"] or ""),
+                }
+            )
+        return items
+
+    def get_student_findings_from_audit(self, audit_id: int, student_token: str) -> Dict[str, list]:
+        """Return findings within a given audit that mention the student token.
+
+        Supports:
+        - tiempos / abandono: payload is List[str] with "DNI — Nombre (detail)" labels
+        - plagio: payload is List[Dict] with estudiante1 / estudiante2 keys
+        """
+        token_lower = str(student_token).strip().lower()
+        result: Dict[str, list] = {}
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT finding_type, payload_json FROM findings WHERE audit_id = ?",
+                (int(audit_id),),
+            ).fetchall()
+
+        for row in rows:
+            ftype = str(row["finding_type"])
+            try:
+                payload = json.loads(row["payload_json"] or "[]")
+            except (ValueError, TypeError):
+                payload = []
+
+            matched: list = []
+            if ftype in ("tiempos", "abandono"):
+                if payload and isinstance(payload[0], dict):
+                    # New format: enriched dicts with 'dni', 'nombre', 'apellido'
+                    matched = [
+                        d for d in payload
+                        if isinstance(d, dict) and (
+                            token_lower in str(d.get("dni", "")).lower()
+                            or token_lower in str(d.get("nombre", "")).lower()
+                            or token_lower in str(d.get("apellido", "")).lower()
+                        )
+                    ]
+                else:
+                    # Legacy format: list of strings like "DNI — Nombre (detail)"
+                    matched = [s for s in payload if isinstance(s, str) and token_lower in s.lower()]
+            elif ftype == "plagio":
+                matched = [
+                    d for d in payload
+                    if isinstance(d, dict) and (
+                        token_lower in str(d.get("estudiante1", "")).lower()
+                        or token_lower in str(d.get("estudiante2", "")).lower()
+                    )
+                ]
+
+            if matched:
+                result[ftype] = matched
+
+        return result
+
     def save_audit(self, state: Dict[str, Any], report_text: str) -> int:
         """Persist one audit report and related findings."""
         created_at = state.get("timestamp") or datetime.now(timezone.utc).isoformat()
@@ -692,8 +840,8 @@ class AuditStore:
     def _insert_findings(conn: sqlite3.Connection, audit_id: int, state: Dict[str, Any]) -> None:
         finding_specs = [
             ("plagio", state.get("copias_detectadas") or []),
-            ("abandono", state.get("respuestas_nr") or []),
-            ("tiempos", state.get("tiempos_sospechosos") or []),
+            ("abandono", state.get("abandono_detalle") or state.get("respuestas_nr") or []),
+            ("tiempos", state.get("tiempos_detalle") or state.get("tiempos_sospechosos") or []),
         ]
 
         now = datetime.now(timezone.utc).isoformat()

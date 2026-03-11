@@ -27,6 +27,8 @@ def discovery_node(state: Dict[str, Any] | None = None) -> Dict[str, Any]:
     for path in sorted(inbox.iterdir()):
         if not path.is_file() or path.suffix.lower() not in _SUPPORTED:
             continue
+        if store.has_job_for_source(str(path)):
+            continue
         risk = score_file_risk(str(path))
         payload = {
             "file_type": path.suffix.lower().lstrip("."),

@@ -45,12 +45,14 @@ def tool_analizar_tiempos(
                     "razon": f"Usó solo {porcentaje:.1f}% del tiempo disponible"
                 })
 
-    # Build descriptive labels
+    # Build descriptive labels and enrich detail dicts with nombre/apellido
     students_by_dni = {str(s.get("dni", "")): s for s in students_data if s.get("dni")}
     labels = []
     for s in sospechosos:
         base = students_by_dni.get(s["dni"], {})
         nombre = base.get("nombre", "")
+        s["nombre"] = nombre
+        s["apellido"] = base.get("apellido", "")
         label = f"{s['dni']} — {nombre}" if nombre else (s["dni"] or "Desconocido")
         label += f" ({s['porcentaje_usado']}% del tiempo)"
         labels.append(label)
