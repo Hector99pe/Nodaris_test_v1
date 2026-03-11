@@ -9,7 +9,7 @@ def test_discovery_enqueues_supported_files(monkeypatch, tmp_path: Path) -> None
     inbox = tmp_path / "inbox"
     inbox.mkdir(parents=True, exist_ok=True)
     (inbox / "a_exam.json").write_text("{}", encoding="utf-8")
-    (inbox / "b_exam.xlsx").write_text("placeholder", encoding="utf-8")
+    (inbox / "b_exam.csv").write_text("dni,nota\n123,15", encoding="utf-8")
     (inbox / "notes.txt").write_text("ignore", encoding="utf-8")
 
     db_path = tmp_path / "audits.db"

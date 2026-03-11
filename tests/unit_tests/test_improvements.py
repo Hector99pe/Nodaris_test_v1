@@ -43,7 +43,7 @@ class TestReportGuardrails:
         divider = "─" * 70
         report = (
             "Header\n"
-            "🔍 DETECCIÓN DE COPIAS\n"
+            "🔍 DETECCIÓN DE COPIAS  (3 casos)\n"
             "Total de casos: 5\n"
             "  🔴 Caso 1: A ↔ B\n"
             + divider + "\n"
@@ -62,7 +62,7 @@ class TestReportGuardrails:
         divider = "─" * 70
         report = (
             "Header\n"
-            "🔍 DETECCIÓN DE COPIAS\n"
+            "🔍 DETECCIÓN DE COPIAS  (1 caso)\n"
             "Total: 1\n"
             + divider + "\n"
             "Footer\n"
@@ -75,12 +75,11 @@ class TestReportGuardrails:
     def test_removes_abandono_without_data(self):
         from agent.nodes.report import _validate_report_guardrails
 
-        divider = "─" * 70
         report = (
             "Header\n"
-            "⚠️ ABANDONO (NR)\n"
+            "⚠️ ABANDONO (NR)  (3 estudiantes)\n"
             "Estudiantes: 3\n"
-            + divider + "\n"
+            "┌─────────────────────────────────────────────┐\n"
             "Footer\n"
         )
         state = {"copias_detectadas": [], "respuestas_nr": [], "tiempos_sospechosos": []}
@@ -91,12 +90,11 @@ class TestReportGuardrails:
     def test_removes_tiempos_without_data(self):
         from agent.nodes.report import _validate_report_guardrails
 
-        divider = "─" * 70
         report = (
             "Header\n"
-            "⏱️ TIEMPOS SOSPECHOSOS\n"
+            "⏱️ TIEMPOS SOSPECHOSOS  (2 estudiantes)\n"
             "Estudiantes: 2\n"
-            + divider + "\n"
+            "┌─────────────────────────────────────────────┐\n"
             "Footer\n"
         )
         state = {"copias_detectadas": [], "respuestas_nr": [], "tiempos_sospechosos": []}

@@ -24,7 +24,7 @@ Herramientas disponibles:
 - analizar_abandono: Identifica estudiantes que dejaron preguntas sin responder (NR). Requiere students_data.
 - analizar_tiempos: Detecta tiempos de respuesta sospechosos (<40% del permitido). Requiere students_data con tiempos.
 - evaluar_dificultad: Evalúa dificultad de preguntas por tasa de acierto. Requiere exam_data con preguntas.
-- extraer_datos_archivo: Extrae datos de archivos (Excel, PDF, JSON, CSV). Requiere file_path.
+- extraer_datos_archivo: Extrae datos de archivos (JSON, CSV). Requiere file_path.
 - normalizar_datos_examen: Normaliza estructura de datos en formato Nodaris. Requiere datos crudos.
 """
 
@@ -181,8 +181,8 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
         recommended = ["calcular_estadisticas"]
         if context["num_students"] >= 2:
             recommended.append("detectar_plagio")
-        if context["has_empty_responses"]:
-            recommended.append("analizar_abandono")
+        # Always verify abandonment — the tool confirms absence too
+        recommended.append("analizar_abandono")
         if context["has_timing_data"]:
             recommended.append("analizar_tiempos")
         if context["has_questions"]:

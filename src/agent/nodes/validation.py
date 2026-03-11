@@ -1,19 +1,27 @@
 """Academic data validation node."""
 
+import json as _json_mod
 import logging
-from typing import Dict, Any
+import re as _re
+from typing import Dict, Any, List, Optional
 from langsmith import traceable
 
 from agent.config import Config
 
 logger = logging.getLogger("nodaris.validation")
 
+# Semantic roles the LLM (or fallback) can assign to columns
+_VALID_ROLES = {
+    "dni", "nombre", "apellido", "nota", "tiempo",
+    "estado", "respuestas_concat", "respuesta_individual", "ignorar",
+}
+
 
 def _try_parse_file(file_path: str):
     """Try to parse a file directly into (exam_data, students_data).
 
-    Handles JSON, Excel (.xlsx/.xls) and CSV files with the standard
-    Nodaris exam schema or recognizable academic data structure.
+    Handles JSON and CSV files with the standard Nodaris exam schema
+    or recognizable academic data structure.
     Returns None for unsupported formats or unrecognized schemas.
     """
     import json as _json
@@ -27,12 +35,10 @@ def _try_parse_file(file_path: str):
 
     if ext == ".json":
         return _try_parse_json(path)
-    elif ext in (".xlsx", ".xls"):
-        return _try_parse_excel(path)
     elif ext == ".csv":
         return _try_parse_csv(path)
     else:
-        return None  # PDF and others: let agent handle via tools
+        return None  # Unsupported format
 
 
 def _try_parse_json(path):
@@ -53,44 +59,6 @@ def _try_parse_json(path):
         return None
 
     return _normalize_exam_payload({"exam_data": data})
-
-
-def _try_parse_excel(path):
-    """Try to parse an Excel file into (exam_data, students_data).
-
-    Supports two layouts:
-    1. Single sheet with student rows (headers: dni, nombre, R1..Rn, etc.)
-    2. Multiple sheets matching Nodaris schema (examen, preguntas, etc.)
-    """
-    try:
-        import openpyxl
-    except ImportError:
-        return None
-
-    try:
-        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-    except Exception:
-        return None
-
-    try:
-        return _try_parse_excel_workbook(wb)
-    finally:
-        wb.close()
-
-
-def _try_parse_excel_workbook(wb):
-    """Internal: parse an open workbook."""
-    # Strategy 1: single sheet with student data
-    ws = wb.active
-    if ws is None:
-        return None
-
-    rows = list(ws.iter_rows(values_only=True))
-    if not rows or len(rows) < 2:
-        return None
-
-    headers = [str(c).strip().lower() if c is not None else "" for c in rows[0]]
-    return _try_build_from_tabular(headers, rows[1:])
 
 
 def _try_parse_csv(path):
@@ -122,79 +90,172 @@ def _try_parse_csv(path):
     return _try_build_from_tabular(headers, all_rows[1:])
 
 
-# Column name aliases for auto-detection
-_DNI_ALIASES = {"dni", "codigo", "código", "id", "documento", "carnet", "matricula", "matrícula"}
-_NOMBRE_ALIASES = {"nombre", "nombres", "name", "estudiante", "alumno"}
-_APELLIDO_ALIASES = {"apellido", "apellidos", "last_name", "surname"}
-_NOTA_ALIASES = {"nota", "puntaje", "score", "calificacion", "calificación", "grade"}
-_TIEMPO_ALIASES = {"tiempo", "tiempo_total", "tiempo_seg", "time", "duracion", "duración", "tiempo_total_seg"}
+# ── Column mapping: LLM-first, regex fallback ──────────────────────
+
+def _llm_map_columns(headers: List[str], sample_row: list) -> Optional[Dict[int, str]]:
+    """Ask the LLM to semantically map each column header to a data role.
+
+    Returns a dict  {column_index: role}  or None when the LLM is unavailable.
+    """
+    if not Config.OPENAI_API_KEY:
+        return None
+
+    try:
+        from langchain_openai import ChatOpenAI
+        from pydantic import SecretStr
+        from agent.resilience import call_with_llm_circuit_breaker
+
+        llm = ChatOpenAI(
+            api_key=SecretStr(Config.OPENAI_API_KEY),
+            model=Config.OPENAI_MODEL,
+            temperature=0.0,
+        )
+
+        sample_values = [
+            str(v).strip() if v is not None else "" for v in sample_row[: len(headers)]
+        ]
+
+        prompt = (
+            "Eres un clasificador de columnas para datos académicos de exámenes.\n"
+            "Dadas las cabeceras de un archivo tabular y una fila de ejemplo, "
+            "asigna a CADA columna exactamente UNO de estos roles:\n\n"
+            '  "dni"                  → identificador del estudiante (DNI, código, matrícula, carnet, documento, id)\n'
+            '  "nombre"              → nombre o nombre completo del estudiante\n'
+            '  "apellido"            → apellido(s) del estudiante\n'
+            '  "nota"                → calificación, puntaje, score\n'
+            '  "tiempo"              → tiempo empleado (segundos, minutos, duración)\n'
+            '  "estado"              → asistencia o estado (asistió, faltó, presente, ausente, retirado, etc.)\n'
+            '  "respuestas_concat"   → columna ÚNICA que contiene TODAS las respuestas concatenadas '
+            '(ej: "ABCD-EBC", "AABCCDE")\n'
+            '  "respuesta_individual"→ columna con la respuesta a UNA sola pregunta (R1, P2, Pregunta3, etc.)\n'
+            '  "ignorar"             → columna irrelevante para la auditoría\n\n'
+            "Cabeceras: " + _json_mod.dumps(headers, ensure_ascii=False) + "\n"
+            "Ejemplo:    " + _json_mod.dumps(sample_values, ensure_ascii=False) + "\n\n"
+            "Responde SOLO con un JSON  {índice_columna: rol}  — sin explicaciones.\n"
+            'Ejemplo de respuesta: {"0": "dni", "1": "nombre", "2": "nota"}'
+        )
+
+        response = call_with_llm_circuit_breaker(lambda: llm.invoke(prompt))
+        raw = (response.content or "").strip()
+
+        # Extract JSON from potential markdown fences
+        json_match = _re.search(r"\{.*\}", raw, _re.DOTALL)
+        if not json_match:
+            logger.warning("LLM column mapper: no JSON found in response")
+            return None
+
+        parsed = _json_mod.loads(json_match.group())
+        mapping: Dict[int, str] = {}
+        for k, v in parsed.items():
+            idx = int(k)
+            role = str(v).strip().lower()
+            if role in _VALID_ROLES and 0 <= idx < len(headers):
+                mapping[idx] = role
+
+        if mapping:
+            logger.info("LLM column mapping: %s", mapping)
+        return mapping or None
+
+    except Exception as e:
+        logger.warning("LLM column mapping failed, using fallback: %s", e)
+        return None
+
+
+def _fallback_map_columns(headers: List[str]) -> Dict[int, str]:
+    """Minimal regex-based column mapping used when the LLM is unavailable."""
+    mapping: Dict[int, str] = {}
+    for i, h in enumerate(headers):
+        h_clean = h.strip().lower()
+        if _re.match(r"^(dni|codigo|código|id|documento|carnet|matr[ií]cula)$", h_clean):
+            mapping[i] = "dni"
+        elif _re.match(r"^(nombre|nombres|estudiante|alumno|name)$", h_clean):
+            mapping[i] = "nombre"
+        elif _re.match(r"^(apellido|apellidos|last_name|surname)$", h_clean):
+            mapping[i] = "apellido"
+        elif _re.match(r"^(nota|puntaje|score|calificaci[oó]n|grade)$", h_clean):
+            mapping[i] = "nota"
+        elif _re.match(r"^(tiempo|tiempo_total|tiempo_seg|time|duraci[oó]n|tiempo_total_seg)$", h_clean):
+            mapping[i] = "tiempo"
+        elif _re.match(r"^(estado|status|asistencia)$", h_clean):
+            mapping[i] = "estado"
+        elif _re.match(r"^(respuestas?|responses?|answers?)$", h_clean):
+            mapping[i] = "respuestas_concat"
+        elif _re.match(r"^(r|p|resp|pregunta|q)\s*\d+$", h_clean):
+            mapping[i] = "respuesta_individual"
+    return mapping
 
 
 def _try_build_from_tabular(headers, data_rows):
-    """Try to build (exam_data, students_data) from tabular data.
+    """Build (exam_data, students_data) from tabular data.
 
-    Detects columns by matching header names against known aliases.
-    Identifies response columns as those starting with 'r' followed by a digit,
-    or 'p' followed by a digit, or 'pregunta'.
+    Uses the LLM to semantically interpret column names.
+    Falls back to regex matching when the LLM is unavailable.
     """
     if not headers or not data_rows:
         return None
 
-    col_map = {}
-    resp_indices = []
-    tiempo_idx = None
+    # Ask the LLM first; fall back to regex
+    mapping = _llm_map_columns(headers, data_rows[0])
+    if mapping is None:
+        mapping = _fallback_map_columns(headers)
 
-    for i, h in enumerate(headers):
-        h_clean = h.strip().lower()
-        if h_clean in _DNI_ALIASES:
-            col_map["dni"] = i
-        elif h_clean in _NOMBRE_ALIASES:
-            col_map["nombre"] = i
-        elif h_clean in _APELLIDO_ALIASES:
-            col_map["apellido"] = i
-        elif h_clean in _NOTA_ALIASES:
-            col_map["nota"] = i
-        elif h_clean in _TIEMPO_ALIASES:
-            tiempo_idx = i
-        else:
-            # Check for response columns: r1, r2, p1, p2, pregunta1, resp1, etc.
-            import re
-            if re.match(r'^(r|p|resp|pregunta|q)\s*\d+$', h_clean):
-                resp_indices.append(i)
-
-    # Must have at least DNI or nombre to be useful
-    if "dni" not in col_map and "nombre" not in col_map:
+    # Must have at least a dni or nombre column to proceed
+    roles_found = set(mapping.values())
+    if "dni" not in roles_found and "nombre" not in roles_found:
         return None
 
-    students = []
+    # Collect indices by role
+    dni_idx = next((i for i, r in mapping.items() if r == "dni"), None)
+    nombre_idx = next((i for i, r in mapping.items() if r == "nombre"), None)
+    apellido_idx = next((i for i, r in mapping.items() if r == "apellido"), None)
+    nota_idx = next((i for i, r in mapping.items() if r == "nota"), None)
+    tiempo_idx = next((i for i, r in mapping.items() if r == "tiempo"), None)
+    estado_idx = next((i for i, r in mapping.items() if r == "estado"), None)
+    respuestas_concat_idx = next((i for i, r in mapping.items() if r == "respuestas_concat"), None)
+    resp_individual_indices = sorted(i for i, r in mapping.items() if r == "respuesta_individual")
+
+    students: List[Dict[str, Any]] = []
     for row in data_rows:
         row_cells = list(row)
         if len(row_cells) < len(headers):
             row_cells.extend([None] * (len(headers) - len(row_cells)))
 
-        student = {}
-        if "dni" in col_map:
-            val = row_cells[col_map["dni"]]
+        student: Dict[str, Any] = {}
+
+        if dni_idx is not None:
+            val = row_cells[dni_idx]
             student["dni"] = str(val).strip() if val is not None else ""
-        if "nombre" in col_map:
-            val = row_cells[col_map["nombre"]]
+        if nombre_idx is not None:
+            val = row_cells[nombre_idx]
             student["nombre"] = str(val).strip() if val is not None else ""
-        if "apellido" in col_map:
-            val = row_cells[col_map["apellido"]]
+        if apellido_idx is not None:
+            val = row_cells[apellido_idx]
             student["apellido"] = str(val).strip() if val is not None else ""
-        if "nota" in col_map:
-            val = row_cells[col_map["nota"]]
+        if nota_idx is not None:
+            val = row_cells[nota_idx]
             try:
                 student["nota"] = float(val) if val is not None else 0
             except (ValueError, TypeError):
                 student["nota"] = 0
 
-        if resp_indices:
+        if resp_individual_indices:
             respuestas = []
-            for ri in resp_indices:
+            for ri in resp_individual_indices:
                 val = row_cells[ri] if ri < len(row_cells) else None
                 respuestas.append(str(val).strip().upper() if val is not None else "NR")
             student["respuestas"] = respuestas
+        elif respuestas_concat_idx is not None:
+            val = row_cells[respuestas_concat_idx] if respuestas_concat_idx < len(row_cells) else None
+            raw = str(val).strip().upper() if val is not None else ""
+            if raw:
+                student["respuestas"] = [
+                    "NR" if c in ("-", "_", "*", " ") else c
+                    for c in raw
+                ]
+
+        if estado_idx is not None:
+            val = row_cells[estado_idx]
+            student["estado"] = str(val).strip() if val is not None else ""
 
         if tiempo_idx is not None:
             val = row_cells[tiempo_idx]
@@ -211,15 +272,18 @@ def _try_build_from_tabular(headers, data_rows):
         return None
 
     # Build minimal exam_data
-    exam_data = {
+    exam_data: Dict[str, Any] = {
         "examen": {"id": "desde_archivo", "curso": "Importado"},
         "preguntas": [],
     }
 
-    # If we have response columns, build question stubs
-    if resp_indices:
-        for idx, ri in enumerate(resp_indices, 1):
+    if resp_individual_indices:
+        for idx, ri in enumerate(resp_individual_indices, 1):
             exam_data["preguntas"].append({"id": idx, "tema": headers[ri]})
+    elif respuestas_concat_idx is not None and students:
+        first_resp = students[0].get("respuestas", [])
+        for idx in range(1, len(first_resp) + 1):
+            exam_data["preguntas"].append({"id": idx, "tema": f"P{idx}"})
 
     return exam_data, students
 

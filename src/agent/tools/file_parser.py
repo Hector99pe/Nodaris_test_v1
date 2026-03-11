@@ -1,6 +1,6 @@
 """Tools for parsing and normalizing academic data files.
 
-Handles Excel, PDF, JSON and CSV file ingestion with LLM-assisted
+Handles JSON and CSV file ingestion with LLM-assisted
 structure interpretation and human-in-the-loop clarification.
 """
 
@@ -19,11 +19,11 @@ from agent.config import Config
 def tool_extraer_datos_archivo(
     state: Annotated[dict, InjectedState] = None,  # type: ignore[assignment]
 ) -> str:
-    """Extrae datos crudos de un archivo Excel, PDF, JSON o CSV subido por el usuario.
+    """Extrae datos crudos de un archivo JSON o CSV subido por el usuario.
 
     Lee el archivo, extrae headers y filas de datos, y retorna una muestra
     para que el agente interprete la estructura.
-    Soporta: .xlsx, .xls, .pdf, .json, .csv
+    Soporta: .json, .csv
     """
     state = state or {}
     file_path = state.get("file_path", "")
@@ -40,14 +40,10 @@ def tool_extraer_datos_archivo(
     try:
         if ext == ".json":
             return _parse_json(path)
-        elif ext in (".xlsx", ".xls"):
-            return _parse_excel(path)
         elif ext == ".csv":
             return _parse_csv(path)
-        elif ext == ".pdf":
-            return _parse_pdf(path)
         else:
-            return json.dumps({"tipo": "archivo", "error": f"Formato no soportado: {ext}"})
+            return json.dumps({"tipo": "archivo", "error": f"Formato no soportado: {ext}. Solo se aceptan .json y .csv"})
     except Exception as e:
         return json.dumps({"tipo": "archivo", "error": f"Error al procesar archivo: {str(e)}"})
 
@@ -83,9 +79,7 @@ def tool_normalizar_datos_examen(
     ext = path.suffix.lower()
 
     try:
-        if ext in (".xlsx", ".xls"):
-            rows, headers = _read_excel_full(path, mapping.get("sheet_name"))
-        elif ext == ".csv":
+        if ext == ".csv":
             rows, headers = _read_csv_full(path)
         elif ext == ".json":
             with open(path, "r", encoding="utf-8") as f:
@@ -182,75 +176,6 @@ def _parse_json(path: Path) -> str:
     return json.dumps(info, ensure_ascii=False, default=str)
 
 
-def _parse_excel(path: Path) -> str:
-    """Parse an Excel file, return structure + auto-parsed data if possible."""
-    import openpyxl
-
-    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-    info: Dict[str, Any] = {
-        "tipo": "archivo",
-        "formato": "excel",
-        "hojas": wb.sheetnames,
-    }
-
-    sheets_data = []
-    active_headers_lower = None
-    active_all_data_rows = None
-
-    for sheet_name in wb.sheetnames:
-        ws = wb[sheet_name]
-        is_active = (ws == wb.active)
-
-        # Read all rows for active sheet (for auto-detection), preview for others
-        if is_active:
-            all_rows = list(ws.iter_rows(values_only=True))
-        else:
-            all_rows = list(ws.iter_rows(max_row=6, values_only=True))
-
-        if not all_rows:
-            sheets_data.append({"hoja": sheet_name, "vacia": True})
-            continue
-
-        headers = [str(c) if c is not None else "" for c in all_rows[0]]
-        sample_rows = [
-            [str(c) if c is not None else "" for c in row]
-            for row in all_rows[1:6]
-        ]
-
-        sheet_info: Dict[str, Any] = {
-            "hoja": sheet_name,
-            "headers": headers,
-            "muestra_filas": sample_rows,
-        }
-
-        if is_active:
-            sheet_info["total_filas_estimado"] = len(all_rows) - 1
-            active_headers_lower = [h.lower().strip() for h in headers]
-            active_all_data_rows = all_rows[1:]
-        else:
-            sheet_info["total_filas_estimado"] = ws.max_row - 1 if ws.max_row else 0
-
-        sheets_data.append(sheet_info)
-
-    info["hojas_detalle"] = sheets_data
-    wb.close()
-
-    # Auto-detect data structure from active sheet
-    if active_headers_lower and active_all_data_rows:
-        try:
-            from agent.nodes.validation import _try_build_from_tabular
-            parsed = _try_build_from_tabular(active_headers_lower, active_all_data_rows)
-            if parsed:
-                exam_data, students = parsed
-                info["auto_parsed"] = True
-                info["datos"] = {"exam_data": exam_data, "students_data": students}
-                info["mensaje"] = f"Excel auto-parseado: {len(students)} estudiantes detectados"
-        except Exception:
-            pass
-
-    return json.dumps(info, ensure_ascii=False, default=str)
-
-
 def _parse_csv(path: Path) -> str:
     """Parse a CSV file and return structure + auto-parsed data if possible."""
     import csv as csv_mod
@@ -335,76 +260,6 @@ def _read_csv_full(path: Path) -> tuple:
 
     headers = all_rows[0]
     data_rows = all_rows[1:]
-    return data_rows, headers
-
-
-def _parse_pdf(path: Path) -> str:
-    """Parse a PDF file and extract tables or text."""
-    import pdfplumber
-
-    info: Dict[str, Any] = {
-        "tipo": "archivo",
-        "formato": "pdf",
-    }
-
-    tables_found: List[Dict[str, Any]] = []
-    text_content = []
-
-    with pdfplumber.open(path) as pdf:
-        info["total_paginas"] = len(pdf.pages)
-
-        for i, page in enumerate(pdf.pages[:5]):  # Max 5 pages
-            # Try to extract tables first
-            tables = page.extract_tables()
-            if tables:
-                for t_idx, table in enumerate(tables):
-                    if table and len(table) > 1:
-                        tables_found.append({
-                            "pagina": i + 1,
-                            "tabla_idx": t_idx,
-                            "headers": table[0],
-                            "muestra_filas": table[1:4],
-                            "total_filas": len(table) - 1,
-                        })
-            else:
-                # Extract text as fallback
-                text = page.extract_text()
-                if text:
-                    text_content.append({
-                        "pagina": i + 1,
-                        "texto": text[:500]
-                    })
-
-    if tables_found:
-        info["tablas"] = tables_found
-        info["tipo_contenido"] = "tablas"
-    elif text_content:
-        info["texto"] = text_content
-        info["tipo_contenido"] = "texto_libre"
-    else:
-        info["tipo_contenido"] = "vacio"
-
-    return json.dumps(info, ensure_ascii=False, default=str)
-
-
-def _read_excel_full(path: Path, sheet_name: str = None) -> tuple:
-    """Read all data from an Excel sheet."""
-    import openpyxl
-
-    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-    ws = wb[sheet_name] if sheet_name and sheet_name in wb.sheetnames else wb.active
-
-    rows = list(ws.iter_rows(values_only=True))
-    wb.close()
-
-    if not rows:
-        return [], []
-
-    headers = [str(c) if c is not None else "" for c in rows[0]]
-    data_rows = []
-    for row in rows[1:]:
-        data_rows.append([c for c in row])
-
     return data_rows, headers
 
 

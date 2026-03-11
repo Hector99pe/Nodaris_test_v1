@@ -49,6 +49,9 @@ AUDIT_USAGE: Final[str] = "Uso: /auditar &lt;dni&gt; &lt;nota&gt;. Ejemplo: /aud
 # Track pending interrupts per chat (for human-in-the-loop)
 pending_interrupts: dict[int, str] = {}  # chat_id -> thread_id
 
+# Cache exam data per chat so file data persists to conversations
+_chat_exam_cache: dict[int, dict] = {}  # chat_id -> {exam_data, students_data, file_name}
+
 # Progress messages for streaming feedback
 _PROGRESS_MESSAGES = [
     "📋 Planificando auditoría...",
@@ -95,7 +98,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "<b>Puedes:</b>\n"
         "• Escribirme en lenguaje natural\n"
         "• Pedirme auditar un registro\n"
-        "• Enviarme archivos (Excel, PDF, JSON) para auditar\n"
+        "• Enviarme archivos (CSV, JSON) para auditar\n"
         "• Verificar hashes de autenticación\n"
         "• Consultar sobre el sistema de notas\n\n"
         f"{_COMMANDS_MENU}\n\n"
@@ -115,7 +118,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "<b>Auditoría rápida:</b>\n"
         f"{AUDIT_USAGE}\n\n"
         "<b>Archivos soportados:</b>\n"
-        "📄 Excel (.xlsx, .xls), PDF, JSON, CSV\n"
+        "📄 CSV, JSON\n"
         "Envía un archivo directamente al chat para auditarlo.\n\n"
         "<b>Conversación libre:</b>\n"
         "También puedes escribirme en lenguaje natural.\n"
@@ -333,7 +336,7 @@ async def auditar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle document uploads (Excel, PDF, JSON) for audit."""
+    """Handle document uploads (CSV, JSON) for audit."""
     _ = context
     if update.message is None or update.message.document is None:
         return
@@ -342,7 +345,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     file_name = document.file_name or "unknown"
     file_ext = Path(file_name).suffix.lower()
 
-    supported = {".json", ".xlsx", ".xls", ".pdf", ".csv"}
+    supported = {".json", ".csv"}
     if file_ext not in supported:
         await update.message.reply_text(
             f"❌ Formato no soportado: {html.escape(file_ext)}\n"
@@ -391,6 +394,27 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     pending_interrupts[chat_id] = thread_id
                     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
                     return
+
+        # Check for error status (data couldn't be read/parsed)
+        if result.get("status") == "error":
+            error_msg = html.escape(result.get("mensaje", "No se pudieron leer los datos del archivo."))
+            await update.message.reply_text(
+                f"❌ <b>Error</b>\n{error_msg}",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        # Cache exam data so subsequent conversations can access it
+        cached: dict = {}
+        if result.get("exam_data"):
+            cached["exam_data"] = result["exam_data"]
+        if result.get("students_data"):
+            cached["students_data"] = result["students_data"]
+        if cached:
+            cached["file_name"] = file_name
+            _chat_exam_cache[chat_id] = cached
+            logger.info("Cached exam data for chat %s (%d students)", chat_id,
+                        len(cached.get("students_data", [])))
 
         # Send report
         if result.get("reporte_final"):
@@ -459,10 +483,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 )
             return
 
-        # Normal conversation
+        # Normal conversation — inject cached exam data as state if available
         thread_id = f"chat_{chat_id}"
+
+        extra_state = None
+        if chat_id in _chat_exam_cache:
+            cache = _chat_exam_cache[chat_id]
+            extra_state = {}
+            if cache.get("exam_data"):
+                extra_state["exam_data"] = cache["exam_data"]
+            if cache.get("students_data"):
+                extra_state["students_data"] = cache["students_data"]
+
         response = await process_conversation(
-            user_message, thread_id=thread_id
+            user_message, thread_id=thread_id, extra_state=extra_state
         )
         await update.message.reply_text(response)
 
@@ -542,7 +576,7 @@ def run_telegram_bot() -> None:
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("estado", estado_command))
 
-    # Document handler (Excel, PDF, JSON)
+    # Document handler (CSV, JSON)
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
     # Conversational message handler

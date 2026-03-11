@@ -27,7 +27,7 @@ class Config:
 
     # Agent autonomy and guardrails
     ALLOW_HUMAN_INTERRUPT: bool = os.getenv("ALLOW_HUMAN_INTERRUPT", "false").lower() == "true"
-    MAX_AGENT_ITERATIONS: int = int(os.getenv("MAX_AGENT_ITERATIONS", "8"))
+    MAX_AGENT_ITERATIONS: int = int(os.getenv("MAX_AGENT_ITERATIONS", "15"))
     MAX_REFLECTION_REPLANS: int = int(os.getenv("MAX_REFLECTION_REPLANS", "3"))
 
     # Persistence

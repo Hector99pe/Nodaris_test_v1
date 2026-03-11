@@ -92,11 +92,26 @@ def route_after_validation(state: AcademicAuditState) -> str:
 def route_after_reflection(state: AcademicAuditState) -> str:
     """Route after reflection - replan via planner if confidence is too low.
 
-    Only goes to verify/report if there's actual audit data.
+    Only goes to verify/report if there's actual audit data AND the agent
+    actually used audit tools. If the agent reasoned about intent and chose
+    to respond conversationally (no tool calls), respect that decision.
     Conversational mode and failed extractions skip verify/report.
     When confidence is low the full planner is re-invoked so the LLM
     receives an updated plan enriched with reflection feedback.
     """
+    # If the agent didn't call any audit tools, it chose to respond
+    # conversationally — respect that decision and skip verify/report.
+    messages = state.get("messages", [])
+    has_tool_results = any(
+        isinstance(m, _ToolMessage) for m in messages
+    )
+    if not has_tool_results:
+        return END
+
+    # If data access failed, terminate with the error already in state
+    if state.get("status") == "error":
+        return END
+
     # Must have actual analyzed data to produce a meaningful report
     has_audit_data = bool(
         state.get("exam_data")
@@ -110,8 +125,13 @@ def route_after_reflection(state: AcademicAuditState) -> str:
     confidence = state.get("confidence_score", 1.0)
     iteration = state.get("iteration_count", 0)
 
+    # If confidence is critically low after exhausting replans, terminate
+    # instead of generating a hollow report
+    if confidence < 0.7 and iteration >= Config.MAX_REFLECTION_REPLANS:
+        return END
+
     if confidence < 0.7 and iteration < Config.MAX_REFLECTION_REPLANS:
-        return "planner"  # true re-planning: planner rebuilds context with reflection notes
+        return "planner"
     return "verify"
 
 

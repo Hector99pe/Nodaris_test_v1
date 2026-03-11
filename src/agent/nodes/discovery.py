@@ -11,7 +11,7 @@ from agent.config import Config
 from agent.nodes.risk_scoring import score_file_risk
 from agent.storage import AuditStore
 
-_SUPPORTED = {".json", ".xlsx", ".xls", ".csv", ".pdf"}
+_SUPPORTED = {".json", ".csv"}
 
 
 @traceable(name="discoveryNode")

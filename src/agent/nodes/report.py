@@ -4,6 +4,7 @@ Generates professional audit reports with output guardrails.
 """
 
 import logging
+import unicodedata
 from datetime import datetime
 from typing import Dict, Any
 from langsmith import traceable
@@ -11,6 +12,45 @@ from langsmith import traceable
 from agent.storage import AuditStore
 
 logger = logging.getLogger("nodaris.report")
+
+_BOX_W = 45    # inner display-width for section boxes
+_FRAME_W = 70  # inner display-width for main frame
+
+
+def _dw(text: str) -> int:
+    """Display width of *text*, counting wide/emoji chars as 2 columns."""
+    w = 0
+    for ch in text:
+        if unicodedata.east_asian_width(ch) in ("W", "F"):
+            w += 2
+        else:
+            w += 1
+    return w
+
+
+def _pad(text: str, width: int) -> str:
+    """Right-pad *text* to *width* display columns."""
+    return text + " " * max(width - _dw(text), 0)
+
+
+def _section(emoji: str, title: str) -> list[str]:
+    """Build a 3-line section header box with correct alignment."""
+    inner = f"  {emoji}  {title}"
+    return [
+        "┌" + "─" * _BOX_W + "┐",
+        "│" + _pad(inner, _BOX_W) + "│",
+        "└" + "─" * _BOX_W + "┘",
+    ]
+
+
+def _frame(ch: str = "═", left: str = "╔", right: str = "╗") -> str:
+    """Build a horizontal frame line."""
+    return left + ch * _FRAME_W + right
+
+
+def _frame_text(text: str) -> str:
+    """Build a ║ … ║ line with display-width-aware padding."""
+    return "║" + _pad(text, _FRAME_W) + "║"
 
 
 def _evaluate_report_quality(report_text: str, confidence_score: float) -> str | None:
@@ -83,6 +123,17 @@ def _validate_report_guardrails(state: Dict[str, Any], report_text: str) -> str:
     removed_sections: list[str] = []
     skipping = False
 
+    def _is_section_boundary(text: str) -> bool:
+        """Detect section boundary: ─ dividers or ┌── box headers."""
+        stripped = text.strip()
+        if not stripped:
+            return False
+        if len(stripped) >= 10 and all(c in ("─", "=") for c in stripped):
+            return True
+        if stripped.startswith("┌") and "─" in stripped:
+            return True
+        return False
+
     for line in lines:
         stripped = line.strip()
 
@@ -100,12 +151,11 @@ def _validate_report_guardrails(state: Dict[str, Any], report_text: str) -> str:
             continue
 
         if skipping:
-            # Stop skipping when we reach a divider line (next section boundary)
-            is_divider = len(stripped) >= 10 and all(c in ("─", "=") for c in stripped)
-            if is_divider:
+            # Stop skipping when we reach a section boundary (next section)
+            if _is_section_boundary(stripped):
                 skipping = False
-                cleaned.append(line)  # Keep divider — belongs to next section
-            # Either way, skip/continue (content lines or the divider itself)
+                cleaned.append(line)  # Keep boundary — belongs to next section
+            # Either way, skip/continue
             continue
 
         cleaned.append(line)
@@ -133,230 +183,229 @@ def report_node(state: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Dict with reporte_final, status, and mensaje
     """
-    report_sections = []
+    lines: list[str] = []
 
-    # === HEADER ===
-    report_sections.append("=" * 70)
-    report_sections.append("📊 REPORTE DE AUDITORÍA ACADÉMICA".center(70))
-    report_sections.append("=" * 70)
-    report_sections.append("")
-
-    # Timestamp
-    timestamp = state.get("timestamp", "")
-    if timestamp:
-        report_sections.append(f"🕐 Fecha: {timestamp}")
-    else:
-        report_sections.append(f"🕐 Fecha: {datetime.now().isoformat()}")
-
-    # Verification hash
+    # ── Metadata ──
+    timestamp = state.get("timestamp") or datetime.now().isoformat()
     hash_val = state.get("hash", "")
-    if hash_val:
-        report_sections.append(f"🔐 Hash de verificación: {hash_val[:16]}...")
+    confidence_score = state.get("confidence_score", 0.0)
 
-    report_sections.append("")
-
-    # === EXECUTIVE SUMMARY ===
-    report_sections.append("─" * 70)
-    report_sections.append("📋 RESUMEN EJECUTIVO")
-    report_sections.append("─" * 70)
-    report_sections.append("")
-
+    # ── Determine audit type info ──
     exam_data = state.get("exam_data") or {}
     students_data = state.get("students_data") or []
+    is_individual = not exam_data and not students_data and state.get("dni")
 
-    if exam_data or students_data:
+    # ================================================================
+    # HEADER
+    # ================================================================
+    title = "📊  REPORTE DE AUDITORÍA ACADÉMICA  📊"
+    left_pad = (_FRAME_W - _dw(title)) // 2
+    lines.append(_frame())
+    lines.append(_frame_text(" " * left_pad + title))
+    lines.append(_frame("═", "╚", "╝"))
+    lines.append("")
+
+    # ── Meta row ──
+    meta_parts = [f"📅 {timestamp[:16].replace('T', ' ')}"]
+    if hash_val:
+        meta_parts.append(f"🔐 {hash_val[:16]}…")
+    meta_parts.append(f"📈 Confianza: {confidence_score:.0%}")
+    lines.append("  │  ".join(meta_parts))
+    lines.append("")
+
+    # ================================================================
+    # RESUMEN EJECUTIVO
+    # ================================================================
+    lines.extend(_section("📋", "RESUMEN EJECUTIVO"))
+    lines.append("")
+
+    if is_individual:
+        dni = state.get("dni", "")
+        nota = state.get("nota", 0)
+        lines.append("  • Tipo: Auditoría individual")
+        lines.append(f"  • Estudiante: DNI {dni}")
+        lines.append(f"  • Nota: {nota}/20")
+    else:
         num_students = len(students_data)
-        report_sections.append("Tipo: Auditoría de examen completo")
-        report_sections.append(f"Estudiantes analizados: {num_students}")
-
+        lines.append("  • Tipo: Auditoría de examen completo")
+        lines.append(f"  • Estudiantes: {num_students}")
         if exam_data:
             examen_info = exam_data.get("examen", {})
-            titulo = examen_info.get("curso", exam_data.get("titulo", "Sin título"))
+            curso = examen_info.get("curso", exam_data.get("titulo", "Sin título"))
             exam_id = examen_info.get("id", "")
-            if exam_id:
-                titulo = f"{titulo} ({exam_id})"
-            report_sections.append(f"Examen: {titulo}")
-    else:
-        report_sections.append("Tipo: Auditoría individual")
-        dni = state.get("dni", "")
-        if dni:
-            report_sections.append(f"Estudiante: DNI {dni}")
-            report_sections.append(f"Nota: {state.get('nota', 0)}")
-
-    report_sections.append("")
+            label = f"{curso} ({exam_id})" if exam_id else curso
+            lines.append(f"  • Examen: {label}")
+            preguntas = exam_data.get("preguntas", [])
+            if preguntas:
+                lines.append(f"  • Preguntas: {len(preguntas)}")
 
     # Status
     status = state.get("status", "ok")
-    status_emoji = {
-        "ok": "✅",
-        "error": "❌",
-        "warning": "⚠️",
-        "planned": "📝"
-    }.get(status, "ℹ️")
+    status_map = {"ok": "✅ OK", "error": "❌ ERROR", "warning": "⚠️ ALERTA", "planned": "📝 PLANIFICADO"}
+    lines.append(f"  • Estado: {status_map.get(status, 'ℹ️ ' + status.upper())}")
 
-    report_sections.append(f"Estado: {status_emoji} {status.upper()}")
-    mensaje = state.get("mensaje", "")
-    if mensaje:
-        report_sections.append(f"Mensaje: {mensaje}")
+    anomalia = state.get("anomalia_detectada", False)
+    if anomalia:
+        lines.append("")
+        lines.append("  ⚠️  SE DETECTARON ANOMALÍAS — Ver hallazgos abajo")
 
-    report_sections.append("")
+    lines.append("")
 
-    # === STATISTICS ===
+    # ================================================================
+    # ESTADÍSTICAS
+    # ================================================================
     promedio = state.get("promedio", 0.0)
     distribucion_notas = state.get("distribucion_notas") or {}
     preguntas_dificiles = state.get("preguntas_dificiles", 0)
 
     if promedio > 0 or distribucion_notas:
-        report_sections.append("─" * 70)
-        report_sections.append("📊 ESTADÍSTICAS")
-        report_sections.append("─" * 70)
-        report_sections.append("")
+        lines.extend(_section("📊", "ESTADÍSTICAS"))
+        lines.append("")
 
         if promedio > 0:
-            report_sections.append(f"Promedio general: {promedio:.2f}")
-
             if promedio >= 17:
-                interpretacion = "Excelente"
+                nivel, barra = "Excelente", "🟢"
             elif promedio >= 14:
-                interpretacion = "Bueno"
+                nivel, barra = "Bueno", "🔵"
             elif promedio >= 11:
-                interpretacion = "Aprobado"
+                nivel, barra = "Aprobado", "🟡"
             else:
-                interpretacion = "Desaprobado"
-            report_sections.append(f"Clasificación: {interpretacion}")
+                nivel, barra = "Desaprobado", "🔴"
+            lines.append(f"  • Promedio general: {promedio:.2f}/20  {barra} {nivel}")
 
         if preguntas_dificiles > 0:
-            report_sections.append(f"Preguntas difíciles: {preguntas_dificiles}")
+            lines.append(f"  • Preguntas difíciles: {preguntas_dificiles}")
 
         if distribucion_notas:
-            report_sections.append("")
-            report_sections.append("Distribución de notas:")
+            lines.append("")
+            lines.append("  Distribución de notas:")
+            total = sum(distribucion_notas.values()) or 1
             for rango, cantidad in sorted(distribucion_notas.items()):
-                bar = "█" * (cantidad // 2)
-                report_sections.append(f"  {rango}: {cantidad:3d} {bar}")
+                pct = (cantidad / total) * 100
+                bar_len = int(pct / 5)
+                bar = "▓" * bar_len + "░" * (20 - bar_len)
+                lines.append(f"    {rango:>5}  │ {bar} {cantidad} ({pct:.0f}%)")
 
-        report_sections.append("")
+        lines.append("")
 
-    # === FINDINGS / ANOMALÍAS ===
-    findings = []
-
+    # ================================================================
+    # HALLAZGOS PRINCIPALES
+    # ================================================================
     copias_detectadas = state.get("copias_detectadas") or []
     respuestas_nr = state.get("respuestas_nr") or []
     tiempos_sospechosos = state.get("tiempos_sospechosos") or []
 
+    has_findings = copias_detectadas or respuestas_nr or tiempos_sospechosos
+
+    if has_findings:
+        lines.extend(_section("🔍", "HALLAZGOS PRINCIPALES"))
+        lines.append("")
+
     if copias_detectadas:
-        findings.append("🔍 DETECCIÓN DE COPIAS")
-        findings.append("")
-        findings.append(f"Total de casos sospechosos: {len(copias_detectadas)}")
-
+        lines.append(f"  🔍 DETECCIÓN DE COPIAS  ({len(copias_detectadas)} caso{'s' if len(copias_detectadas) != 1 else ''})")
+        lines.append("  " + "─" * 40)
         for i, caso in enumerate(copias_detectadas[:5], 1):
-            nivel_emoji = "🔴" if caso.get("nivel_sospecha") == "ALTO" else "🟡"
-            findings.append(
-                f"  {nivel_emoji} Caso {i}: {caso.get('estudiante1', '?')} ↔ {caso.get('estudiante2', '?')}"
-            )
-            findings.append(
-                f"     Similitud: {caso.get('similitud_promedio', 0):.1%} en {caso.get('preguntas_similares', 0)} preguntas"
-            )
-
+            nivel = caso.get("nivel_sospecha", "MEDIO")
+            icon = "🔴" if nivel == "ALTO" else "🟡"
+            e1 = caso.get("estudiante1", "?")
+            e2 = caso.get("estudiante2", "?")
+            sim = caso.get("similitud_promedio", 0)
+            pregs = caso.get("preguntas_similares", 0)
+            lines.append(f"    {icon} {i}. {e1} ↔ {e2}")
+            lines.append(f"       Similitud: {sim:.0%}  •  Preguntas coincidentes: {pregs}  •  Riesgo: {nivel}")
         if len(copias_detectadas) > 5:
-            findings.append(f"  ... y {len(copias_detectadas) - 5} casos más")
-
-        findings.append("")
+            lines.append(f"    … y {len(copias_detectadas) - 5} caso(s) adicional(es)")
+        lines.append("")
 
     if respuestas_nr:
-        findings.append("⚠️ ABANDONO (NR)")
-        findings.append("")
-        findings.append(f"Estudiantes con respuestas vacías: {len(respuestas_nr)}")
-
-        for dni_nr in respuestas_nr[:10]:
-            findings.append(f"  • {dni_nr}")
-
-        if len(respuestas_nr) > 10:
-            findings.append(f"  ... y {len(respuestas_nr) - 10} más")
-
-        findings.append("")
+        lines.append(f"  ⚠️ ABANDONO (NR)  ({len(respuestas_nr)} estudiante{'s' if len(respuestas_nr) != 1 else ''})")
+        lines.append("  " + "─" * 40)
+        if students_data:
+            tasa = (len(respuestas_nr) / len(students_data)) * 100
+            lines.append(f"    Tasa de abandono: {tasa:.1f}%")
+        for item in respuestas_nr[:8]:
+            display = str(item).strip() if item else "(sin identificar)"
+            lines.append(f"    • {display}")
+        if len(respuestas_nr) > 8:
+            lines.append(f"    … y {len(respuestas_nr) - 8} más")
+        lines.append("")
 
     if tiempos_sospechosos:
-        findings.append("⏱️ TIEMPOS SOSPECHOSOS")
-        findings.append("")
-        findings.append(f"Estudiantes con tiempos anómalos: {len(tiempos_sospechosos)}")
+        lines.append(f"  ⏱️ TIEMPOS SOSPECHOSOS  ({len(tiempos_sospechosos)} estudiante{'s' if len(tiempos_sospechosos) != 1 else ''})")
+        lines.append("  " + "─" * 40)
+        for item in tiempos_sospechosos[:8]:
+            display = str(item).strip() if item else "(sin identificar)"
+            lines.append(f"    • {display}")
+        if len(tiempos_sospechosos) > 8:
+            lines.append(f"    … y {len(tiempos_sospechosos) - 8} más")
+        lines.append("")
 
-        for dni_ts in tiempos_sospechosos[:10]:
-            findings.append(f"  • {dni_ts}")
-
-        findings.append("")
-
-    if findings:
-        report_sections.append("─" * 70)
-        report_sections.append("🔍 HALLAZGOS PRINCIPALES")
-        report_sections.append("─" * 70)
-        report_sections.append("")
-        report_sections.extend(findings)
-
-    # === ANALYSIS ===
+    # ================================================================
+    # ANÁLISIS DETALLADO (from agent_reasoner)
+    # ================================================================
     analisis = state.get("analisis", "")
     if analisis:
-        report_sections.append("─" * 70)
-        report_sections.append("🤖 ANÁLISIS DETALLADO")
-        report_sections.append("─" * 70)
-        report_sections.append("")
-        report_sections.append(analisis)
-        report_sections.append("")
+        lines.extend(_section("🤖", "ANÁLISIS DETALLADO"))
+        lines.append("")
+        lines.append(analisis)
+        lines.append("")
 
-    # === REFLECTION ===
+    # ================================================================
+    # EVALUACIÓN DE CALIDAD (reflection)
+    # ================================================================
     reflection_notes = state.get("reflection_notes", "")
     if reflection_notes:
-        report_sections.append("─" * 70)
-        report_sections.append("🔎 EVALUACIÓN DE CALIDAD")
-        report_sections.append("─" * 70)
-        report_sections.append("")
-        report_sections.append(reflection_notes)
-        report_sections.append("")
+        lines.extend(_section("🔎", "EVALUACIÓN DE CALIDAD"))
+        lines.append("")
+        for _rl in reflection_notes.split("\n"):
+            lines.append(f"  {_rl}" if _rl.strip() else "")
+        lines.append("")
 
-    # === RECOMMENDATIONS ===
-    report_sections.append("─" * 70)
-    report_sections.append("💡 RECOMENDACIONES")
-    report_sections.append("─" * 70)
-    report_sections.append("")
+    # ================================================================
+    # RECOMENDACIONES
+    # ================================================================
+    lines.extend(_section("💡", "RECOMENDACIONES"))
+    lines.append("")
 
     recommendations = []
 
     if copias_detectadas:
         if any(c.get("nivel_sospecha") == "ALTO" for c in copias_detectadas):
-            recommendations.append("• URGENTE: Investigar casos de copia de alto riesgo")
-        recommendations.append("• Revisar manualmente las respuestas similares detectadas")
-        recommendations.append("• Considerar medidas anti-fraude para futuros exámenes")
+            recommendations.append("🔴 URGENTE: Investigar casos de copia de alto riesgo")
+        recommendations.append("   Revisar manualmente las respuestas similares detectadas")
+        recommendations.append("   Considerar medidas anti-fraude para futuros exámenes")
 
     if respuestas_nr:
         tasa = (len(respuestas_nr) / len(students_data)) * 100 if students_data else 0
         if tasa > 20:
-            recommendations.append("• CRÍTICO: Tasa de abandono alta - Revisar dificultad del examen")
-        recommendations.append("• Realizar seguimiento con estudiantes que no respondieron")
+            recommendations.append("🔴 CRÍTICO: Tasa de abandono alta — revisar dificultad del examen")
+        recommendations.append("   Realizar seguimiento con estudiantes que no respondieron")
 
     if tiempos_sospechosos:
-        recommendations.append("• Analizar tiempos de respuesta anómalos")
+        recommendations.append("🟡 Analizar tiempos de respuesta anómalos en detalle")
 
     if preguntas_dificiles > 5:
-        recommendations.append("• Considerar el balance de dificultad del examen")
+        recommendations.append("🟡 Considerar el balance de dificultad del examen")
 
-    confidence_score = state.get("confidence_score", 0.0)
     if confidence_score < 0.7:
-        recommendations.append("• Revisar manualmente este análisis - confianza media/baja")
+        recommendations.append("🟡 Revisar manualmente este análisis — confianza media/baja")
 
     if not recommendations:
-        recommendations.append("• No se identificaron acciones inmediatas")
-        recommendations.append("• Continuar con monitoreo regular")
+        recommendations.append("🟢 No se identificaron acciones inmediatas")
+        recommendations.append("   Continuar con monitoreo regular")
 
-    report_sections.extend(recommendations)
-    report_sections.append("")
+    for rec in recommendations:
+        lines.append(f"  {rec}")
+    lines.append("")
 
-    # === FOOTER ===
-    report_sections.append("=" * 70)
-    report_sections.append(f"Confianza del análisis: {confidence_score:.1%}".center(70))
-    report_sections.append("Generado por Nodaris Academic Auditor".center(70))
-    report_sections.append("=" * 70)
+    # ================================================================
+    # FOOTER
+    # ================================================================
+    lines.append(_frame())
+    lines.append(_frame_text(f"  📈 Confianza: {confidence_score:.0%}  │  Nodaris Academic Auditor"))
+    lines.append(_frame("═", "╚", "╝"))
 
-    final_report = "\n".join(report_sections)
+    final_report = "\n".join(lines)
 
     # === OUTPUT GUARDRAIL: remove sections referencing non-existent data ===
     final_report = _validate_report_guardrails(state, final_report)

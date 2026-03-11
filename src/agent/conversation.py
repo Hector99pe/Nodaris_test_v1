@@ -22,6 +22,7 @@ async def process_conversation(
     message: str,
     history: Optional[List[Dict[str, Any]]] = None,
     thread_id: str = "default",
+    extra_state: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Process conversational message through the audit graph.
 
@@ -33,15 +34,20 @@ async def process_conversation(
         message: User message
         history: Previous conversation history (unused - checkpointer handles persistence)
         thread_id: Thread ID for conversation persistence
+        extra_state: Optional additional state fields (e.g. exam_data, students_data)
 
     Returns:
         Assistant response string
     """
     config = {"configurable": {"thread_id": thread_id}}
 
+    state: Dict[str, Any] = {"messages": [HumanMessage(content=message)]}
+    if extra_state:
+        state.update(extra_state)
+
     try:
         result = await _graph.ainvoke(
-            {"messages": [HumanMessage(content=message)]},
+            state,
             config=config,
         )
     except CircuitBreakerOpenError as exc:

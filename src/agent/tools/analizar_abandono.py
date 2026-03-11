@@ -39,14 +39,14 @@ def identificar_nr(
             })
             continue
 
-        # Count empty or very short responses
+        # Count empty / NR responses
         vacias = 0
+        _NR_VALUES = {"", "NR", "N/R", "NO RESPONDIÓ", "-", "_", "*"}
         for respuesta in respuestas:
             if isinstance(respuesta, str):
-                if not respuesta.strip() or respuesta.strip().upper() in ["NR", "N/R", "NO RESPONDIÓ"]:
+                cleaned = respuesta.strip().upper()
+                if not cleaned or cleaned in _NR_VALUES:
                     vacias += 1
-                elif len(respuesta.strip()) < 5:  # Very short answer
-                    vacias += 0.5
 
         porcentaje_vacio = (vacias / len(respuestas)) * 100
 
@@ -148,9 +148,21 @@ def tool_analizar_abandono(
     estudiantes_nr = identificar_nr(students_data)
     analisis = analizar_abandono(estudiantes_nr, len(students_data))
 
+    # Build display labels: prefer "DNI nombre" format
+    student_labels = []
+    students_by_dni = {s.get("dni", ""): s for s in students_data if s.get("dni")}
+    for e in estudiantes_nr:
+        dni = e.get("dni", "")
+        base = students_by_dni.get(dni, {})
+        nombre = base.get("nombre", "")
+        pct = e.get("porcentaje_vacio", 0)
+        label = f"{dni} — {nombre}" if nombre else (dni or "Desconocido")
+        label += f" ({pct:.0f}% vacío)" if pct < 100 else " (no respondió)"
+        student_labels.append(label)
+
     return json.dumps({
         "tipo": "abandono",
-        "estudiantes_nr": [e.get("dni", "") for e in estudiantes_nr],
+        "estudiantes_nr": student_labels,
         "detalle_abandono": estudiantes_nr,
         "analisis": analisis,
     }, ensure_ascii=False)

@@ -47,11 +47,15 @@ async def test_agent_e2e_full_exam_anomaly_dataset() -> None:
         for caso in copias
     )
 
-    respuestas_nr = set(result.get("respuestas_nr") or [])
-    assert {"70334455", "70778899"}.issubset(respuestas_nr)
+    respuestas_nr = result.get("respuestas_nr") or []
+    nr_text = " ".join(respuestas_nr)
+    assert "70334455" in nr_text
+    assert "70778899" in nr_text
 
-    tiempos = set(result.get("tiempos_sospechosos") or [])
-    assert {"70334455", "70556677"}.issubset(tiempos)
+    tiempos = result.get("tiempos_sospechosos") or []
+    tiempos_text = " ".join(tiempos)
+    assert "70334455" in tiempos_text
+    assert "70556677" in tiempos_text
 
     reporte = result["reporte_final"]
     assert "REPORTE DE AUDITORÍA ACADÉMICA" in reporte

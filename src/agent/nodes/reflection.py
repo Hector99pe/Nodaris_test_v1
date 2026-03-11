@@ -100,6 +100,24 @@ def _infer_tool_names(messages: list[Any]) -> list[str]:
     return names
 
 
+def _compute_applicable_tools(state: Dict[str, Any], extracted: Dict[str, Any]) -> set[str]:
+    """Determine which analysis tools should have been used given the available data."""
+    applicable: set[str] = set()
+    students = state.get("students_data") or extracted.get("students_data") or []
+    exam_data = state.get("exam_data") or extracted.get("exam_data") or {}
+
+    if students:
+        applicable.add("calcular_estadisticas")
+        applicable.add("analizar_abandono")
+        if len(students) >= 2:
+            applicable.add("detectar_plagio")
+        if any(s.get("tiempo_total") or s.get("tiempo_respuesta") for s in students):
+            applicable.add("analizar_tiempos")
+    if isinstance(exam_data, dict) and exam_data.get("preguntas"):
+        applicable.add("evaluar_dificultad")
+    return applicable
+
+
 def _infer_mode(state: Dict[str, Any]) -> str:
     if state.get("file_path"):
         return "file"
@@ -126,15 +144,22 @@ def reflection_node(state: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Updated state with extracted data, reflection notes, and confidence score
     """
-    # === Conversational mode - no audit data, skip deep reflection ===
-    if (
-        not state.get("exam_data")
-        and not state.get("students_data")
-        and not state.get("file_path")
-        and not state.get("dni")
-    ):
+    # === Conversational mode - skip deep reflection ===
+    # If no audit data OR if the agent didn't use any tools (chose to chat
+    # even with data available), treat as conversational.
+    has_data = bool(
+        state.get("exam_data")
+        or state.get("students_data")
+        or state.get("file_path")
+        or state.get("dni")
+    )
+    messages = state.get("messages", [])
+    tool_messages = [m for m in messages if isinstance(m, ToolMessage)]
+    agent_used_tools = len(tool_messages) > 0
+
+    if not has_data or not agent_used_tools:
         return {
-            "reflection_notes": "Modo conversacional - sin datos para auditar",
+            "reflection_notes": "Modo conversacional - sin análisis ejecutado",
             "confidence_score": 1.0,
         }
 
@@ -166,11 +191,23 @@ def reflection_node(state: Dict[str, Any]) -> Dict[str, Any]:
         # Tools ran but no real data was extracted — file parsing likely failed
         reflection_notes.append(f"\u26a0\ufe0f Se ejecutaron {num_tools_used} herramientas pero no se obtuvieron datos")
         reflection_notes.append("\u26a0\ufe0f No se pudo extraer informaci\u00f3n del archivo para analizar")
-        confidence_factors.append(0.2)
+        confidence_factors.append(0.0)
         issues_found.append("No se pudieron extraer datos del archivo")
+        # Mark as error so the flow terminates instead of producing a hollow report
+        extracted["_data_access_failed"] = True
     else:
-        reflection_notes.append(f"✓ Se ejecutaron {num_tools_used} herramientas de análisis")
-        confidence_factors.append(0.8)
+        # Coverage-based confidence: compare tools used vs tools applicable
+        used_tool_names = set(_infer_tool_names(messages))
+        applicable = _compute_applicable_tools(state, extracted)
+        analysis_used = used_tool_names & applicable
+        coverage = len(analysis_used) / len(applicable) if applicable else 1.0
+        tool_confidence = 0.5 + (coverage * 0.5)  # 0.5 at 0% → 1.0 at 100%
+        confidence_factors.append(tool_confidence)
+        reflection_notes.append(f"✓ Se ejecutaron {len(analysis_used)}/{len(applicable)} análisis aplicables")
+        if coverage < 0.5:
+            missing_names = applicable - analysis_used
+            reflection_notes.append(f"⚠️ Análisis faltantes: {', '.join(sorted(missing_names))}")
+            issues_found.append(f"Cobertura insuficiente ({coverage:.0%}): faltan {', '.join(sorted(missing_names))}")
 
     # Check plagiarism results
     copias = extracted.get("copias_detectadas", [])
@@ -248,25 +285,20 @@ def reflection_node(state: Dict[str, Any]) -> Dict[str, Any]:
     max_iterations = 3
 
     if confidence_score < 0.7 and iteration < max_iterations:
-        missing = []
-        students_data = state.get("students_data", [])
-
-        if not promedio and students_data:
-            missing.append("calcular estadísticas (tool_calcular_estadisticas)")
-        if len(students_data) >= 2 and not copias and not any(
-            "plagio" in getattr(m, "content", "") for m in tool_messages
-        ):
-            missing.append("detectar plagio (tool_detectar_plagio)")
+        # Build comprehensive list of missing tools
+        used_tool_names = set(_infer_tool_names(messages))
+        applicable = _compute_applicable_tools(state, extracted)
+        missing_tools = sorted(applicable - used_tool_names)
 
         feedback = (
             f"REFLECTION FEEDBACK: Confianza {confidence_score:.2f} (insuficiente). "
             f"Iteración {iteration}/{max_iterations}. "
         )
-        if missing:
-            feedback += f"Análisis faltantes: {', '.join(missing)}. "
+        if missing_tools:
+            feedback += f"DEBES ejecutar estos análisis que faltan: {', '.join(missing_tools)}. "
         if issues_found:
             feedback += f"Problemas: {'; '.join(issues_found)}. "
-        feedback += "Profundiza usando las herramientas disponibles."
+        feedback += "Ejecuta TODAS las herramientas pendientes antes de detenerte."
 
         feedback_messages.append(HumanMessage(content=feedback))
 
@@ -276,7 +308,17 @@ def reflection_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "confidence_score": round(confidence_score, 3),
     }
 
-    # Merge extracted data
+    # If data access failed completely, mark as error so the flow terminates
+    # with a clear message instead of producing a hollow report.
+    if extracted.get("_data_access_failed"):
+        result["status"] = "error"
+        result["mensaje"] = (
+            "No se pudieron leer los datos del archivo. "
+            "Verifica que el formato sea correcto y que contenga datos académicos."
+        )
+
+    # Merge extracted data (remove internal flag)
+    extracted.pop("_data_access_failed", None)
     result.update(extracted)
 
     if feedback_messages:
