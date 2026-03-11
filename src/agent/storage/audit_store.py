@@ -594,6 +594,43 @@ class AuditStore:
             )
         return items
 
+    def list_recent_audits(self, limit: int = 10) -> list[Dict[str, Any]]:
+        """Return the most recent completed audits for visibility."""
+        safe_limit = max(1, int(limit))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, created_at, status, confidence_score, audit_hash,
+                       input_mode, exam_id, dni, summary_json
+                FROM audits
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+
+        items: list[Dict[str, Any]] = []
+        for row in rows:
+            summary_text = str(row["summary_json"] or "{}")
+            try:
+                summary = json.loads(summary_text)
+            except json.JSONDecodeError:
+                summary = {}
+            items.append(
+                {
+                    "id": int(row["id"]),
+                    "created_at": str(row["created_at"]),
+                    "status": row["status"],
+                    "confidence_score": float(row["confidence_score"]) if row["confidence_score"] is not None else None,
+                    "audit_hash": str(row["audit_hash"] or "")[:16],
+                    "input_mode": row["input_mode"],
+                    "exam_id": row["exam_id"],
+                    "dni": row["dni"],
+                    "summary": summary,
+                }
+            )
+        return items
+
     def save_audit(self, state: Dict[str, Any], report_text: str) -> int:
         """Persist one audit report and related findings."""
         created_at = state.get("timestamp") or datetime.now(timezone.utc).isoformat()

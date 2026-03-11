@@ -5,6 +5,7 @@ Can trigger re-planning if confidence is too low.
 """
 
 import json
+import logging
 from typing import Dict, Any
 
 from langchain_core.messages import HumanMessage, ToolMessage
@@ -12,6 +13,8 @@ from langsmith import traceable
 
 from agent.config import Config
 from agent.storage import AuditStore
+
+logger = logging.getLogger("nodaris.reflection")
 
 
 def _extract_tool_results(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -218,6 +221,8 @@ def reflection_node(state: Dict[str, Any]) -> Dict[str, Any]:
         confidence_score = sum(confidence_factors) / len(confidence_factors)
     else:
         confidence_score = 0.5
+
+    logger.info("Reflection: tools_used=%d, confidence=%.3f, has_data=%s", num_tools_used, confidence_score, has_actual_data)
 
     if issues_found:
         reflection_notes.append("\n🔍 Requiere atención:")

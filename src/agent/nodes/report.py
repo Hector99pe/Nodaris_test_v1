@@ -1,13 +1,119 @@
 """Report generation node for Nodaris agent.
 
-Generates professional audit reports.
+Generates professional audit reports with output guardrails.
 """
 
+import logging
 from datetime import datetime
 from typing import Dict, Any
 from langsmith import traceable
 
 from agent.storage import AuditStore
+
+logger = logging.getLogger("nodaris.report")
+
+
+def _evaluate_report_quality(report_text: str, confidence_score: float) -> str | None:
+    """Use LLM to evaluate report quality and coherence.
+
+    Returns a brief quality assessment string, or None if evaluation fails.
+    Only runs for reports with enough substance (audit, not conversational).
+    """
+    from agent.config import Config
+
+    if not Config.OPENAI_API_KEY or len(report_text) < 200:
+        return None
+
+    try:
+        from langchain_openai import ChatOpenAI
+        from pydantic import SecretStr
+        from agent.resilience import call_with_llm_circuit_breaker
+
+        llm = ChatOpenAI(
+            api_key=SecretStr(Config.OPENAI_API_KEY),
+            model=Config.OPENAI_MODEL,
+            temperature=0.1,
+        )
+
+        prompt = f"""Evalúa la calidad de este reporte de auditoría académica en máximo 3 líneas.
+Verifica:
+1. ¿Los hallazgos son coherentes con las estadísticas mostradas?
+2. ¿Las recomendaciones son relevantes a los hallazgos?
+3. ¿Falta algún análisis importante?
+
+Confianza del análisis: {confidence_score:.1%}
+
+Reporte:
+{report_text[:3000]}
+
+Responde en formato: "Calidad: [ALTA/MEDIA/BAJA]. [Breve justificación]"."""
+
+        response = call_with_llm_circuit_breaker(
+            lambda: llm.invoke(prompt)
+        )
+        evaluation = response.content.strip() if response.content else None
+        if evaluation:
+            logger.info("Report quality evaluation: %s", evaluation[:80])
+        return evaluation
+    except Exception as e:
+        logger.warning("Report quality evaluation failed: %s", e)
+        return None
+
+
+def _validate_report_guardrails(state: Dict[str, Any], report_text: str) -> str:
+    """Output guardrail: remove report sections that reference non-existent data.
+
+    Prevents the report from presenting fabricated findings by checking
+    whether the state actually contains the data backing each section.
+    Returns a cleaned report with a warning appended if sections were removed.
+    """
+    copias = state.get("copias_detectadas") or []
+    respuestas_nr = state.get("respuestas_nr") or []
+    tiempos = state.get("tiempos_sospechosos") or []
+
+    # Map: section keyword → (state data that must exist, label)
+    phantom_checks = [
+        ("DETECCIÓN DE COPIAS", copias, "Detección de copias"),
+        ("ABANDONO", respuestas_nr, "Abandono/NR"),
+        ("TIEMPOS SOSPECHOSOS", tiempos, "Tiempos sospechosos"),
+    ]
+
+    lines = report_text.split("\n")
+    cleaned: list[str] = []
+    removed_sections: list[str] = []
+    skipping = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Check if this is a known section header with no backing data
+        matched_phantom = False
+        if not skipping:
+            for keyword, data, label in phantom_checks:
+                if keyword in stripped and not data:
+                    skipping = True
+                    matched_phantom = True
+                    removed_sections.append(f"{label} (sin datos)")
+                    break
+
+        if matched_phantom:
+            continue
+
+        if skipping:
+            # Stop skipping when we reach a divider line (next section boundary)
+            is_divider = len(stripped) >= 10 and all(c in ("─", "=") for c in stripped)
+            if is_divider:
+                skipping = False
+                cleaned.append(line)  # Keep divider — belongs to next section
+            # Either way, skip/continue (content lines or the divider itself)
+            continue
+
+        cleaned.append(line)
+
+    if removed_sections:
+        logger.warning("Guardrail removed %d phantom sections: %s", len(removed_sections), removed_sections)
+
+    return "\n".join(cleaned)
 
 
 @traceable(name="reportNode")
@@ -251,6 +357,14 @@ def report_node(state: Dict[str, Any]) -> Dict[str, Any]:
     report_sections.append("=" * 70)
 
     final_report = "\n".join(report_sections)
+
+    # === OUTPUT GUARDRAIL: remove sections referencing non-existent data ===
+    final_report = _validate_report_guardrails(state, final_report)
+
+    # === QUALITY EVALUATION: LLM validates report coherence ===
+    quality_eval = _evaluate_report_quality(final_report, confidence_score)
+    if quality_eval:
+        final_report += f"\n\n🔎 Evaluación de calidad: {quality_eval}"
 
     audit_id = None
     try:

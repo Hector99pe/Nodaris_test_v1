@@ -2,10 +2,13 @@
 
 import hashlib
 import json
+import logging
 from typing import Dict, Any
 from langsmith import traceable
 
 from agent.tools.crypto import generate_verification_hash
+
+logger = logging.getLogger("nodaris.verification")
 
 
 @traceable(name="generateVerification")
@@ -34,6 +37,8 @@ async def generate_verification(state: Dict[str, Any]) -> Dict[str, Any]:
         hash_value = generate_verification_hash(
             state.get("dni", ""), state.get("nota", 0)
         )
+
+    logger.info("Verification hash generated: %s...", hash_value[:16])
 
     return {
         "status": "ok",

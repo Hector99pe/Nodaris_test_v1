@@ -38,15 +38,46 @@ from langgraph.types import Command
 from agent.config import Config
 from agent.graph.graph import get_graph_with_memory
 from agent.conversation import process_conversation
-from agent.resilience import CircuitBreakerOpenError, format_llm_circuit_breaker_message
+from agent.resilience import CircuitBreakerOpenError, format_llm_circuit_breaker_message, get_llm_circuit_breaker_snapshot
+from agent.storage.audit_store import AuditStore
 
 # Graph with memory checkpointer for Telegram persistence
 _graph = get_graph_with_memory()
 
-AUDIT_USAGE: Final[str] = "Uso: /auditar <dni> <nota>. Ejemplo: /auditar 12345678 15"
+AUDIT_USAGE: Final[str] = "Uso: /auditar &lt;dni&gt; &lt;nota&gt;. Ejemplo: /auditar 12345678 15"
 
 # Track pending interrupts per chat (for human-in-the-loop)
 pending_interrupts: dict[int, str] = {}  # chat_id -> thread_id
+
+# Progress messages for streaming feedback
+_PROGRESS_MESSAGES = [
+    "📋 Planificando auditoría...",
+    "🔍 Analizando datos...",
+    "🤖 Ejecutando herramientas de análisis...",
+    "📊 Evaluando resultados...",
+    "📝 Generando reporte...",
+]
+
+
+async def _send_progress(chat, stage: int) -> None:
+    """Send a progress indicator to the user."""
+    if 0 <= stage < len(_PROGRESS_MESSAGES):
+        try:
+            await chat.send_action("typing")
+            await chat.send_message(_PROGRESS_MESSAGES[stage])
+        except Exception:
+            pass  # Progress messages are best-effort
+
+
+_COMMANDS_MENU: Final[str] = (
+    "<b>Comandos disponibles:</b>\n"
+    "• /help - Menú de ayuda completo\n"
+    "• /info - Información del sistema\n"
+    "• /auditar &lt;dni&gt; &lt;nota&gt; - Auditoría rápida\n"
+    "• /auditorias - Últimas auditorías registradas\n"
+    "• /stats - Estadísticas de la cola de jobs\n"
+    "• /estado - Estado operativo del sistema"
+)
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -67,9 +98,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "• Enviarme archivos (Excel, PDF, JSON) para auditar\n"
         "• Verificar hashes de autenticación\n"
         "• Consultar sobre el sistema de notas\n\n"
-        "<b>Comandos:</b>\n"
-        "• /auditar &lt;dni&gt; &lt;nota&gt; - Auditoría rápida\n"
-        "• /help - Ver ayuda\n\n"
+        f"{_COMMANDS_MENU}\n\n"
         "<i>Ejemplo: 'Audita el registro del DNI 12345678 con nota 15'</i>",
         parse_mode=ParseMode.HTML
     )
@@ -81,8 +110,165 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if update.message is None:
         return
     await update.message.reply_text(
+        "📖 <b>Ayuda de Nodaris</b>\n\n"
+        f"{_COMMANDS_MENU}\n\n"
+        "<b>Auditoría rápida:</b>\n"
         f"{AUDIT_USAGE}\n\n"
-        "También puedes enviarme archivos Excel, PDF o JSON con datos de exámenes."
+        "<b>Archivos soportados:</b>\n"
+        "📄 Excel (.xlsx, .xls), PDF, JSON, CSV\n"
+        "Envía un archivo directamente al chat para auditarlo.\n\n"
+        "<b>Conversación libre:</b>\n"
+        "También puedes escribirme en lenguaje natural.\n"
+        "<i>Ejemplo: 'Audita el registro del DNI 12345678 con nota 15'</i>",
+        parse_mode=ParseMode.HTML
+    )
+
+
+async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /info command - show system information."""
+    _ = context
+    if update.message is None:
+        return
+
+    cb = get_llm_circuit_breaker_snapshot()
+    cb_state = cb["state"]
+    cb_icon = "🟢" if cb_state == "closed" else ("🟡" if cb_state == "half_open" else "🔴")
+
+    await update.message.reply_text(
+        "ℹ️ <b>Información del Sistema</b>\n\n"
+        f"🤖 <b>Modelo LLM:</b> {html.escape(Config.OPENAI_MODEL)}\n"
+        f"🌡️ <b>Temperatura:</b> {Config.OPENAI_TEMPERATURE}\n"
+        f"🔄 <b>Máx. iteraciones agente:</b> {Config.MAX_AGENT_ITERATIONS}\n"
+        f"🔁 <b>Máx. re-planificaciones:</b> {Config.MAX_REFLECTION_REPLANS}\n"
+        f"📊 <b>Rango notas válidas:</b> {Config.NOTA_MIN}-{Config.NOTA_MAX}\n"
+        f"🎯 <b>Umbral anomalía:</b> {Config.ANOMALY_THRESHOLD}\n\n"
+        f"{cb_icon} <b>Circuit Breaker LLM:</b> {cb_state}\n"
+        f"  Fallos consecutivos: {cb['consecutive_failures']}\n"
+        f"  Último error: {html.escape(cb['last_error'][:80]) if cb['last_error'] else 'Ninguno'}\n\n"
+        f"🗃️ <b>Base de datos:</b> {html.escape(Config.AUDIT_DB_PATH)}\n"
+        f"📂 <b>Autonomía:</b> {'Habilitada' if Config.AUTONOMY_ENABLED else 'Deshabilitada'}\n"
+        f"🧠 <b>Memoria de aprendizaje:</b> {'Activa' if Config.LEARNING_MEMORY_ENABLED else 'Inactiva'}",
+        parse_mode=ParseMode.HTML
+    )
+
+
+async def auditorias_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /auditorias command - list recent audits."""
+    _ = context
+    if update.message is None:
+        return
+
+    try:
+        store = AuditStore()
+        audits = store.list_recent_audits(10)
+    except Exception as e:
+        logger.error("Error listing audits: %s", e)
+        await update.message.reply_text("❌ Error al consultar auditorías.")
+        return
+
+    if not audits:
+        await update.message.reply_text("📋 No hay auditorías registradas aún.")
+        return
+
+    lines = ["📋 <b>Últimas auditorías</b>\n"]
+    for a in audits:
+        score = a["confidence_score"]
+        score_str = f"{score:.0%}" if score is not None else "N/A"
+        mode = a["input_mode"] or "—"
+        status = a["status"] or "—"
+        date = str(a["created_at"])[:16].replace("T", " ")
+        dni = a["dni"] or "—"
+        hash_short = a["audit_hash"][:8] if a["audit_hash"] else "—"
+
+        icon = "✅" if status == "success" else ("❌" if status == "error" else "⏳")
+        lines.append(
+            f"{icon} <b>#{a['id']}</b> | {html.escape(date)}\n"
+            f"   Modo: {html.escape(mode)} | DNI: {html.escape(dni)}\n"
+            f"   Confianza: {score_str} | Hash: <code>{html.escape(hash_short)}</code>"
+        )
+
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /stats command - show job queue statistics."""
+    _ = context
+    if update.message is None:
+        return
+
+    try:
+        store = AuditStore()
+        stats = store.get_job_stats()
+        dead_count = store.get_dead_letter_count()
+    except Exception as e:
+        logger.error("Error getting stats: %s", e)
+        await update.message.reply_text("❌ Error al consultar estadísticas.")
+        return
+
+    await update.message.reply_text(
+        "📊 <b>Estadísticas de la Cola</b>\n\n"
+        f"⏳ Pendientes: <b>{stats['pending']}</b>\n"
+        f"▶️ En proceso: <b>{stats['running']}</b>\n"
+        f"✅ Completados: <b>{stats['completed']}</b>\n"
+        f"❌ Fallidos: <b>{stats['failed']}</b>\n"
+        f"🔍 En revisión: <b>{stats['review_required']}</b>\n"
+        f"👍 Aprobados: <b>{stats['approved']}</b>\n"
+        f"👎 Rechazados: <b>{stats['rejected']}</b>\n\n"
+        f"📦 <b>Total jobs:</b> {stats['total']}\n"
+        f"💀 <b>Dead-letters:</b> {dead_count}",
+        parse_mode=ParseMode.HTML
+    )
+
+
+async def estado_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /estado command - operational health overview."""
+    _ = context
+    if update.message is None:
+        return
+
+    # Circuit breaker status
+    cb = get_llm_circuit_breaker_snapshot()
+    cb_state = cb["state"]
+    if cb_state == "closed":
+        cb_line = "🟢 <b>LLM:</b> Operativo"
+    elif cb_state == "half_open":
+        cb_line = "🟡 <b>LLM:</b> Recuperándose"
+    else:
+        wait = int(cb["retry_after_sec"])
+        cb_line = f"🔴 <b>LLM:</b> Protegido (reintento en {wait}s)"
+
+    # Job queue + dead-letter
+    try:
+        store = AuditStore()
+        stats = store.get_job_stats()
+        dead_count = store.get_dead_letter_count()
+        queue_line = (
+            f"📦 <b>Cola:</b> {stats['pending']} pendientes, "
+            f"{stats['running']} en proceso, "
+            f"{stats['completed']} completados"
+        )
+        dead_line = f"💀 <b>Dead-letters:</b> {dead_count}"
+        failed_line = f"❌ <b>Fallidos:</b> {stats['failed']}"
+        review_line = f"🔍 <b>En revisión:</b> {stats['review_required']}"
+    except Exception:
+        queue_line = "📦 <b>Cola:</b> No disponible"
+        dead_line = "💀 <b>Dead-letters:</b> No disponible"
+        failed_line = ""
+        review_line = ""
+
+    parts = [
+        "🏥 <b>Estado del Sistema</b>\n",
+        cb_line,
+        queue_line,
+        failed_line,
+        review_line,
+        dead_line,
+        f"\n🤖 Modelo: {html.escape(Config.OPENAI_MODEL)}",
+        f"📂 Autonomía: {'Habilitada' if Config.AUTONOMY_ENABLED else 'Deshabilitada'}",
+    ]
+    await update.message.reply_text(
+        "\n".join(p for p in parts if p),
+        parse_mode=ParseMode.HTML
     )
 
 
@@ -92,17 +278,18 @@ async def auditar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     if not context.args or len(context.args) != 2:
-        await update.message.reply_text(f"❌ {AUDIT_USAGE}")
+        await update.message.reply_text(f"❌ {AUDIT_USAGE}", parse_mode=ParseMode.HTML)
         return
 
     dni = context.args[0]
     try:
         nota = int(context.args[1])
     except ValueError:
-        await update.message.reply_text(f"❌ La nota debe ser numérica.\n\n{AUDIT_USAGE}")
+        await update.message.reply_text(f"❌ La nota debe ser numérica.\n\n{AUDIT_USAGE}", parse_mode=ParseMode.HTML)
         return
 
     await update.message.chat.send_action("typing")
+    await update.message.reply_text("📋 Iniciando auditoría individual...")
 
     chat_id = update.message.chat_id
     thread_id = f"audit_{chat_id}_{uuid.uuid4().hex[:8]}"
@@ -165,6 +352,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     await update.message.chat.send_action("typing")
+    await update.message.reply_text(f"📁 Archivo recibido: {html.escape(file_name)}\n🔄 Procesando...")
 
     # Download file to temp directory
     file = await document.get_file()
@@ -349,6 +537,10 @@ def run_telegram_bot() -> None:
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("auditar", auditar_command))
+    app.add_handler(CommandHandler("info", info_command))
+    app.add_handler(CommandHandler("auditorias", auditorias_command))
+    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("estado", estado_command))
 
     # Document handler (Excel, PDF, JSON)
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))

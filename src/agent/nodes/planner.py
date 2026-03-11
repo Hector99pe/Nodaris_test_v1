@@ -5,6 +5,7 @@ that guides the agent_reasoner's tool selection.
 """
 
 import json
+import logging
 from typing import Dict, Any
 
 from langchain_core.messages import HumanMessage
@@ -12,6 +13,20 @@ from langsmith import traceable
 
 from agent.config import Config
 from agent.storage import AuditStore
+
+logger = logging.getLogger("nodaris.planner")
+
+# Available tool descriptions for LLM-based planning
+_TOOL_CATALOG = """
+Herramientas disponibles:
+- calcular_estadisticas: Calcula promedio, distribución de notas y estadísticas generales. Requiere students_data.
+- detectar_plagio: Detecta copias comparando respuestas entre estudiantes (≥2). Requiere students_data.
+- analizar_abandono: Identifica estudiantes que dejaron preguntas sin responder (NR). Requiere students_data.
+- analizar_tiempos: Detecta tiempos de respuesta sospechosos (<40% del permitido). Requiere students_data con tiempos.
+- evaluar_dificultad: Evalúa dificultad de preguntas por tasa de acierto. Requiere exam_data con preguntas.
+- extraer_datos_archivo: Extrae datos de archivos (Excel, PDF, JSON, CSV). Requiere file_path.
+- normalizar_datos_examen: Normaliza estructura de datos en formato Nodaris. Requiere datos crudos.
+"""
 
 
 def _reorder_by_learning(mode: str, recommended: list[str]) -> tuple[list[str], str]:
@@ -35,6 +50,56 @@ def _reorder_by_learning(mode: str, recommended: list[str]) -> tuple[list[str], 
 
     hint = ", ".join(preferred[: Config.LEARNING_MEMORY_TOP_TOOLS])
     return final_tools, hint
+
+
+def _generate_llm_plan(context: dict, mode: str, memory_hint: str, reflection_notes: str) -> str | None:
+    """Use the LLM to generate a dynamic audit plan based on context.
+
+    Falls back to None if LLM is unavailable, letting the rule-based plan work.
+    """
+    if not Config.OPENAI_API_KEY:
+        return None
+
+    try:
+        from langchain_openai import ChatOpenAI
+        from pydantic import SecretStr
+        from agent.resilience import call_with_llm_circuit_breaker
+
+        llm = ChatOpenAI(
+            api_key=SecretStr(Config.OPENAI_API_KEY),
+            model=Config.OPENAI_MODEL,
+            temperature=0.2,
+        )
+
+        prompt = f"""Eres el planificador de Nodaris, un agente de auditoría académica.
+
+Genera un plan de auditoría conciso (máximo 5 líneas) basado en el contexto:
+
+Modo: {mode}
+Datos disponibles:
+- Estudiantes: {context.get('num_students', 0)}
+- Preguntas: {'Sí' if context.get('has_questions') else 'No'}
+- Tiempos: {'Sí' if context.get('has_timing_data') else 'No'}
+- Respuestas vacías: {'Sí' if context.get('has_empty_responses') else 'No'}
+- Archivo pendiente: {'Sí' if context.get('has_file') else 'No'}
+
+{_TOOL_CATALOG}
+
+{"Prioridad por histórico: " + memory_hint if memory_hint else ""}
+{"Feedback de reflexión anterior: " + reflection_notes if reflection_notes else ""}
+
+Responde SOLO con el plan de auditoría, sin explicaciones adicionales. Usa emojis para cada paso."""
+
+        response = call_with_llm_circuit_breaker(
+            lambda: llm.invoke(prompt)
+        )
+        plan = response.content.strip() if response.content else None
+        if plan:
+            logger.info("LLM-generated plan: %s", plan[:100])
+        return plan
+    except Exception as e:
+        logger.warning("LLM planning failed, falling back to rule-based: %s", e)
+        return None
 
 
 @traceable(name="plannerNode")
@@ -129,6 +194,10 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     elif mode == "individual":
         plan_parts.append(f"👤 DNI: {state.get('dni', 'N/A')}, Nota: {state.get('nota', 'N/A')}")
+        memory_hint = ""
+
+    else:
+        memory_hint = ""
 
     # Detect re-planning (reflection has already happened at least once)
     is_replan = state.get("iteration_count", 0) > 0
@@ -140,7 +209,15 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
         if reflection_notes:
             plan_parts.append(f"📋 Motivo: {reflection_notes}")
 
-    plan_text = "\n".join(plan_parts)
+    # --- LLM dynamic planning for complex modes ---
+    llm_plan = None
+    if mode in ("full_exam", "file") and context["num_students"] >= 2:
+        llm_plan = _generate_llm_plan(context, mode, memory_hint, reflection_notes)
+
+    if llm_plan:
+        plan_text = llm_plan
+    else:
+        plan_text = "\n".join(plan_parts)
 
     # Build message for the LLM
     messages_update = []
@@ -167,6 +244,7 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
         ))
 
     label = f"Re-planificación #{replan_num} ({mode_text})" if is_replan else f"Plan de auditoría creado ({mode_text})"
+    logger.info("Plan created: mode=%s, is_replan=%s, num_students=%d", mode, is_replan, context["num_students"])
     return {
         "plan": plan_text,
         "status": "planned",

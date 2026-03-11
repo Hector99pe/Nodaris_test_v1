@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
 import uuid
 from pathlib import Path
@@ -16,6 +17,37 @@ from agent.graph.graph import graph
 from agent.resilience import CircuitBreakerOpenError, get_llm_circuit_breaker_snapshot
 from agent.state import AcademicAuditState
 from agent.storage import AuditStore
+
+logger = logging.getLogger("nodaris.queue_consumer")
+
+
+async def _notify_admin_failed_job(job_id: int, file_path: str, reason: str) -> None:
+    """Send Telegram notification to admin when a job exhausts retries."""
+    admin_chat_id = Config.TELEGRAM_ADMIN_CHAT_ID
+    bot_token = Config.TELEGRAM_BOT_TOKEN
+    if not admin_chat_id or not bot_token:
+        return
+
+    try:
+        import httpx
+        file_name = Path(file_path).name
+        message = (
+            f"⚠️ <b>Job fallido → Dead Letter</b>\n\n"
+            f"📋 Job ID: {job_id}\n"
+            f"📁 Archivo: {file_name}\n"
+            f"❌ Razón: {reason[:200]}\n\n"
+            f"Revisa con /review o en la base de datos."
+        )
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        async with httpx.AsyncClient() as client:
+            await client.post(url, json={
+                "chat_id": admin_chat_id,
+                "text": message,
+                "parse_mode": "HTML",
+            })
+        logger.info("Admin notified about failed job %d", job_id)
+    except Exception as e:
+        logger.warning("Failed to notify admin about job %d: %s", job_id, e)
 
 
 def _archive_file(file_path: str, target_dir: str) -> str | None:
@@ -70,6 +102,8 @@ def _mark_failed_with_dead_letter(
         return
     final_ref = _archive_and_update(store, job_id, file_path, Config.AUTONOMY_FAILED_PATH)
     store.add_dead_letter(job_id, reason, {**snapshot, "source_ref": final_ref})
+    # Notify admin via Telegram about the permanently failed job
+    asyncio.ensure_future(_notify_admin_failed_job(job_id, file_path, reason))
 
 
 async def consume_once() -> bool:

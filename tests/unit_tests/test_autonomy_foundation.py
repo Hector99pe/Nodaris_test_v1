@@ -46,7 +46,8 @@ def test_audit_store_persists_audit_and_findings(tmp_path: Path) -> None:
 
 
 def test_route_after_reasoner_stops_at_max_iterations(monkeypatch) -> None:
-    monkeypatch.setattr("agent.graph.graph.Config.MAX_AGENT_ITERATIONS", 2)
+    from agent.config import Config as _Config
+    monkeypatch.setattr(_Config, "MAX_AGENT_ITERATIONS", 2)
     result = route_after_reasoner({"iteration_count": 2, "messages": []})
     assert result == "__end__"
 
@@ -120,6 +121,8 @@ def test_planner_uses_learning_priority(monkeypatch) -> None:
             }
 
     monkeypatch.setattr("agent.nodes.planner.Config.LEARNING_MEMORY_ENABLED", True)
+    # Disable LLM planning so the rule-based path (with memory hint) is used
+    monkeypatch.setattr("agent.nodes.planner.Config.OPENAI_API_KEY", None)
     monkeypatch.setattr("agent.nodes.planner.AuditStore", lambda: _FakeStore())
 
     state = {

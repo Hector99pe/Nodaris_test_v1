@@ -68,3 +68,6 @@ class Config:
     # Learning memory
     LEARNING_MEMORY_ENABLED: bool = os.getenv("LEARNING_MEMORY_ENABLED", "true").lower() == "true"
     LEARNING_MEMORY_TOP_TOOLS: int = int(os.getenv("LEARNING_MEMORY_TOP_TOOLS", "3"))
+
+    # Admin notifications
+    TELEGRAM_ADMIN_CHAT_ID: Optional[str] = os.getenv("TELEGRAM_ADMIN_CHAT_ID")

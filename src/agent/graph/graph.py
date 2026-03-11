@@ -21,13 +21,32 @@ Flow:
 from __future__ import annotations
 
 import json as _json
+import logging
 from pathlib import Path
 import sys
 from typing import Any, cast
 
-from langchain_core.messages import ToolMessage as _ToolMessage
+from langchain_core.messages import HumanMessage as _HumanMessage, ToolMessage as _ToolMessage
 from langgraph.graph import StateGraph, END, START
 from langgraph.prebuilt import ToolNode, tools_condition
+
+logger = logging.getLogger("nodaris.graph")
+
+
+# ============================================================================
+# Tool Result Cache
+# ============================================================================
+
+import hashlib as _hashlib
+
+_tool_cache: dict[str, str] = {}  # hash(tool_name + args) → result content
+_CACHE_MAX_SIZE = 50
+
+
+def _cache_key(tool_name: str, args_str: str) -> str:
+    """Generate a deterministic cache key from tool name and arguments."""
+    raw = f"{tool_name}:{args_str}"
+    return _hashlib.md5(raw.encode()).hexdigest()  # noqa: S324 — non-security use
 
 try:
     from agent.config import Config
@@ -128,14 +147,55 @@ def smart_tool_executor(state: AcademicAuditState) -> AcademicAuditState:
     Wraps the standard ToolNode. After executing tools, scans results
     for file extraction or normalization data and injects it into the
     state so subsequent analysis tools can access it.
+
+    Also detects tool failures / empty-data responses and injects
+    recovery feedback so the LLM can adjust its strategy.
+
+    Includes a result cache — identical tool calls with same arguments
+    return cached results to avoid redundant processing.
     """
+    # --- Check cache for duplicate tool calls ---
+    messages = state.get("messages", [])
+    if messages:
+        last_msg = messages[-1]
+        tool_calls = getattr(last_msg, "tool_calls", None)
+        if tool_calls:
+            all_cached = True
+            cached_messages = []
+            for tc in tool_calls:
+                key = _cache_key(tc["name"], _json.dumps(tc.get("args", {}), sort_keys=True))
+                if key in _tool_cache:
+                    cached_messages.append(
+                        _ToolMessage(content=_tool_cache[key], tool_call_id=tc["id"], name=tc["name"])
+                    )
+                    logger.info("Cache hit for tool '%s'", tc["name"])
+                else:
+                    all_cached = False
+                    break
+            if all_cached and cached_messages:
+                return {"messages": cached_messages}
+
     result = _tool_node.invoke(state)
+
+    _EMPTY_SIGNALS = ("no hay datos", "no se encontr", "error", "no se pudo", "sin datos")
+    recovery_hints: list[str] = []
 
     for msg in result.get("messages", []):
         if not isinstance(msg, _ToolMessage):
             continue
         if not isinstance(msg.content, str):
             continue
+
+        # --- Auto-recovery: detect empty / error tool responses ---
+        content_lower = msg.content.lower()
+        if any(signal in content_lower for signal in _EMPTY_SIGNALS):
+            tool_name = getattr(msg, "name", "herramienta desconocida")
+            recovery_hints.append(
+                f"La herramienta '{tool_name}' no devolvió datos útiles. "
+                "Considera usar otra herramienta o verificar que los datos estén disponibles en el estado."
+            )
+            logger.warning("Tool '%s' returned empty/error response, injecting recovery hint", tool_name)
+
         try:
             data = _json.loads(msg.content)
         except (_json.JSONDecodeError, TypeError):
@@ -177,6 +237,28 @@ def smart_tool_executor(state: AcademicAuditState) -> AcademicAuditState:
                     result["exam_data"] = exam_d
                 if students_d:
                     result["students_data"] = students_d
+
+    # Inject recovery feedback if any tools failed
+    if recovery_hints:
+        feedback = "[AUTO-RECOVERY] " + " | ".join(recovery_hints)
+        if "messages" not in result:
+            result["messages"] = []
+        result["messages"].append(_HumanMessage(content=feedback))
+        logger.info("Injected auto-recovery feedback for %d failed tool(s)", len(recovery_hints))
+
+    # --- Populate cache with new tool results ---
+    if messages:
+        last_msg = messages[-1]
+        tool_calls = getattr(last_msg, "tool_calls", None)
+        if tool_calls:
+            result_msgs = [m for m in result.get("messages", []) if isinstance(m, _ToolMessage)]
+            tc_by_id = {tc["id"]: tc for tc in tool_calls}
+            for rmsg in result_msgs:
+                tc = tc_by_id.get(rmsg.tool_call_id)
+                if tc and isinstance(rmsg.content, str):
+                    key = _cache_key(tc["name"], _json.dumps(tc.get("args", {}), sort_keys=True))
+                    if len(_tool_cache) < _CACHE_MAX_SIZE:
+                        _tool_cache[key] = rmsg.content
 
     return result
 

@@ -5,6 +5,7 @@ to let the LLM decide which analyses to run and when to stop.
 """
 
 import json
+import logging
 from typing import Any, Dict
 
 from langchain_core.messages import SystemMessage
@@ -16,6 +17,8 @@ from agent.config import Config
 from agent.resilience import call_with_llm_circuit_breaker
 from agent.tools import AUDIT_TOOLS
 from agent.tools.prompts import build_agent_system_prompt
+
+logger = logging.getLogger("nodaris.agent_reasoner")
 
 
 def _build_context(state: Dict[str, Any]) -> str:
@@ -102,6 +105,9 @@ def agent_reasoner(state: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     iteration = state.get("iteration_count", 0) + 1
+
+    has_tool_calls = bool(getattr(response, "tool_calls", None))
+    logger.info("Reasoner iteration=%d, has_tool_calls=%s, model=%s", iteration, has_tool_calls, Config.OPENAI_MODEL)
 
     return {
         "messages": [response],

@@ -1,9 +1,12 @@
 """Academic data validation node."""
 
+import logging
 from typing import Dict, Any
 from langsmith import traceable
 
 from agent.config import Config
+
+logger = logging.getLogger("nodaris.validation")
 
 
 def _try_parse_file(file_path: str):
@@ -281,7 +284,7 @@ def _normalize_exam_payload(state: Dict[str, Any]) -> tuple[Dict[str, Any], list
 
 
 @traceable(name="validateAcademicData")
-async def validate_academic_data(state: Dict[str, Any]) -> Dict[str, Any]:
+def validate_academic_data(state: Dict[str, Any]) -> Dict[str, Any]:
     """Validate academic record inputs.
 
     Args:
@@ -294,6 +297,8 @@ async def validate_academic_data(state: Dict[str, Any]) -> Dict[str, Any]:
     has_exam = bool(state.get("exam_data")) or bool(state.get("students_data"))
     has_individual = bool(state.get("dni"))
     has_file = bool(state.get("file_path"))
+
+    logger.info("Validation: has_exam=%s, has_individual=%s, has_file=%s", has_exam, has_individual, has_file)
 
     if not has_exam and not has_individual:
         # If there's a file, try to parse it directly into state
