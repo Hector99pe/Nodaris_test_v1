@@ -27,13 +27,20 @@ def identificar_nr(
 
     for estudiante in respuestas_estudiantes:
         dni = estudiante.get("dni", "")
-        respuestas = estudiante.get("respuestas", [])
+
+        # If the student record has no "respuestas" key at all, the source
+        # data simply doesn't contain response columns — skip silently
+        # instead of marking as abandonment.
+        if "respuestas" not in estudiante:
+            continue
+
+        respuestas = estudiante["respuestas"]
 
         if not respuestas:
             estudiantes_nr.append({
                 "dni": dni,
                 "tipo": "ABANDONO_TOTAL",
-                "respuestas_vacias": len(respuestas),
+                "respuestas_vacias": 0,
                 "porcentaje_vacio": 100.0,
                 "nota_esperada": 0
             })
@@ -145,6 +152,9 @@ def tool_analizar_abandono(
     if not students_data:
         return json.dumps({"tipo": "abandono", "estudiantes_nr": [], "mensaje": "No hay datos de estudiantes"})
 
+    # Check if response data exists at all
+    has_responses = any("respuestas" in s for s in students_data)
+
     estudiantes_nr = identificar_nr(students_data)
     analisis = analizar_abandono(estudiantes_nr, len(students_data))
 
@@ -160,9 +170,20 @@ def tool_analizar_abandono(
         label += f" ({pct:.0f}% vacío)" if pct < 100 else " (no respondió)"
         student_labels.append(label)
 
-    return json.dumps({
+    result: Dict[str, Any] = {
         "tipo": "abandono",
         "estudiantes_nr": student_labels,
         "detalle_abandono": estudiantes_nr,
         "analisis": analisis,
-    }, ensure_ascii=False)
+    }
+
+    if not has_responses:
+        result["observacion"] = (
+            "No se encontraron columnas de respuestas en los datos. "
+            "No es posible determinar abandono sin datos de respuestas. "
+            "Los datos solo contienen identificación y/o notas."
+        )
+        result["estudiantes_nr"] = []
+        result["detalle_abandono"] = []
+
+    return json.dumps(result, ensure_ascii=False)

@@ -225,7 +225,13 @@ def _parse_csv(path: Path) -> str:
             if parsed:
                 exam_data, students = parsed
                 info["auto_parsed"] = True
-                info["datos"] = {"exam_data": exam_data, "students_data": students}
+                # Only include a sample in the tool response to avoid token
+                # overflow; the full data is already in state via validation.
+                info["datos"] = {
+                    "exam_data": exam_data,
+                    "students_data": students[:5],
+                    "total_estudiantes": len(students),
+                }
                 info["mensaje"] = f"CSV auto-parseado: {len(students)} estudiantes detectados"
         except Exception:
             pass

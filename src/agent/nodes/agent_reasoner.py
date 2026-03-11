@@ -8,7 +8,7 @@ import json
 import logging
 from typing import Any, Dict
 
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langsmith import traceable
 from pydantic import SecretStr
@@ -19,6 +19,22 @@ from agent.tools import AUDIT_TOOLS
 from agent.tools.prompts import build_agent_system_prompt
 
 logger = logging.getLogger("nodaris.agent_reasoner")
+
+_MAX_TOOL_MSG_CHARS = 4_000  # hard cap per ToolMessage to avoid token overflow
+
+
+def _trim_messages(messages: list) -> list:
+    """Truncate oversized ToolMessage content to stay within token budget."""
+    trimmed = []
+    for msg in messages:
+        if isinstance(msg, ToolMessage) and len(msg.content or "") > _MAX_TOOL_MSG_CHARS:
+            short = msg.content[:_MAX_TOOL_MSG_CHARS] + "\n... [contenido truncado]"
+            trimmed.append(
+                ToolMessage(content=short, tool_call_id=msg.tool_call_id, name=msg.name)
+            )
+        else:
+            trimmed.append(msg)
+    return trimmed
 
 
 def _build_context(state: Dict[str, Any]) -> str:
@@ -98,6 +114,9 @@ def agent_reasoner(state: Dict[str, Any]) -> Dict[str, Any]:
         m for m in state.get("messages", [])
         if not isinstance(m, SystemMessage)
     ]
+
+    # Trim oversized tool messages to prevent token overflow (429 errors)
+    existing_messages = _trim_messages(existing_messages)
 
     # Invoke LLM
     response = call_with_llm_circuit_breaker(

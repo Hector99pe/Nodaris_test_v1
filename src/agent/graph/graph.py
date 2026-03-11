@@ -43,6 +43,11 @@ _tool_cache: dict[str, str] = {}  # hash(tool_name + args) → result content
 _CACHE_MAX_SIZE = 50
 
 
+def clear_tool_cache() -> None:
+    """Clear the tool result cache (e.g. when a new file is uploaded)."""
+    _tool_cache.clear()
+
+
 def _cache_key(tool_name: str, args_str: str) -> str:
     """Generate a deterministic cache key from tool name and arguments."""
     raw = f"{tool_name}:{args_str}"

@@ -36,7 +36,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.types import Command
 
 from agent.config import Config
-from agent.graph.graph import get_graph_with_memory
+from agent.graph.graph import get_graph_with_memory, clear_tool_cache
 from agent.conversation import process_conversation
 from agent.resilience import CircuitBreakerOpenError, format_llm_circuit_breaker_message, get_llm_circuit_breaker_snapshot
 from agent.storage.audit_store import AuditStore
@@ -51,6 +51,9 @@ pending_interrupts: dict[int, str] = {}  # chat_id -> thread_id
 
 # Cache exam data per chat so file data persists to conversations
 _chat_exam_cache: dict[int, dict] = {}  # chat_id -> {exam_data, students_data, file_name}
+
+# Dynamic chat thread ids — reset on each file upload to avoid stale checkpointed data
+_chat_thread_ids: dict[int, str] = {}  # chat_id -> thread_id
 
 # Progress messages for streaming feedback
 _PROGRESS_MESSAGES = [
@@ -368,6 +371,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     thread_id = f"file_{chat_id}_{uuid.uuid4().hex[:8]}"
     config = {"configurable": {"thread_id": thread_id}}
 
+    # Clear stale cache and tool-result cache from previous uploads
+    _chat_exam_cache.pop(chat_id, None)
+    clear_tool_cache()
+
+    # Reset the chat thread so follow-up messages don't see old checkpointed data
+    _chat_thread_ids[chat_id] = f"chat_{chat_id}_{uuid.uuid4().hex[:8]}"
+
     caption = update.message.caption or f"Audita los datos del archivo {file_name}"
 
     state = {
@@ -428,7 +438,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if isinstance(e, CircuitBreakerOpenError):
             await update.message.reply_text(format_llm_circuit_breaker_message(e))
         else:
-            await update.message.reply_text("❌ Error al procesar el archivo. Intenta de nuevo.")
+            short_err = html.escape(str(e)[:200])
+            await update.message.reply_text(
+                f"❌ <b>Error al procesar el archivo</b>\n<code>{short_err}</code>",
+                parse_mode=ParseMode.HTML,
+            )
     finally:
         # Clean up temp file
         try:
@@ -484,16 +498,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
 
         # Normal conversation — inject cached exam data as state if available
-        thread_id = f"chat_{chat_id}"
+        # Use dynamic thread_id that resets on each file upload
+        if chat_id not in _chat_thread_ids:
+            _chat_thread_ids[chat_id] = f"chat_{chat_id}_{uuid.uuid4().hex[:8]}"
+        thread_id = _chat_thread_ids[chat_id]
 
-        extra_state = None
+        extra_state: dict = {}
         if chat_id in _chat_exam_cache:
             cache = _chat_exam_cache[chat_id]
-            extra_state = {}
             if cache.get("exam_data"):
                 extra_state["exam_data"] = cache["exam_data"]
             if cache.get("students_data"):
                 extra_state["students_data"] = cache["students_data"]
+        else:
+            # No cached data — explicitly clear any stale checkpointed values
+            extra_state["exam_data"] = {}
+            extra_state["students_data"] = []
 
         response = await process_conversation(
             user_message, thread_id=thread_id, extra_state=extra_state
