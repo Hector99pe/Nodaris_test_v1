@@ -1,0 +1,85 @@
+{
+  "examen": {
+    "id": "EX-TEST-004",
+    "curso": "Algoritmos y Estructuras de Datos",
+    "codigo_curso": "AED201",
+    "fecha": "2026-03-20",
+    "duracion_min": 90,
+    "docente": {
+      "dni": "44123456",
+      "nombre": "Sandra",
+      "apellido": "Molina"
+    },
+    "supervisores": [
+      {
+        "dni": "45234567",
+        "nombre": "Luis",
+        "apellido": "Ponce"
+      }
+    ],
+    "respuestas_validas": ["A", "B", "C", "D", "NR"]
+  },
+
+  "preguntas": [
+    { "id": 1, "tema": "complejidad", "correcta": "B" },
+    { "id": 2, "tema": "arrays", "correcta": "C" },
+    { "id": 3, "tema": "listas_enlazadas", "correcta": "A" },
+    { "id": 4, "tema": "pilas", "correcta": "D" },
+    { "id": 5, "tema": "colas", "correcta": "B" },
+    { "id": 6, "tema": "arboles", "correcta": "C" },
+    { "id": 7, "tema": "grafos", "correcta": "A" },
+    { "id": 8, "tema": "ordenamiento", "correcta": "D" },
+    { "id": 9, "tema": "busqueda", "correcta": "B" },
+    { "id": 10, "tema": "recursion", "correcta": "A" },
+    { "id": 11, "tema": "hash_tables", "correcta": "C" },
+    { "id": 12, "tema": "arboles_binarios", "correcta": "B" },
+    { "id": 13, "tema": "grafos_avanzado", "correcta": "D" },
+    { "id": 14, "tema": "programacion_dinamica", "correcta": "A" },
+    { "id": 15, "tema": "backtracking", "correcta": "C" }
+  ],
+
+  "estudiantes": [
+    { "id": "E01", "dni": "73111222", "nombre": "Martin", "apellido": "Lopez", "semestre": 4 },
+    { "id": "E02", "dni": "73222333", "nombre": "Carla", "apellido": "Vega", "semestre": 4 },
+    { "id": "E03", "dni": "73333444", "nombre": "Javier", "apellido": "Cortez", "semestre": 4 },
+    { "id": "E04", "dni": "73444555", "nombre": "Rosa", "apellido": "Huerta", "semestre": 4 }
+  ],
+
+  "resultados": [
+    {
+      "estudiante_id": "E01",
+      "tiempo_total_seg": 4100,
+      "respuestas": ["B", "C", "A", "D", "B", "C", "A", "D", "B", "A", "C", "B", "D", "A", "C"],
+      "tiempo_pregunta_seg": [34, 38, 30, 42, 33, 46, 37, 34, 31, 40, 43, 38, 44, 41, 36],
+      "timestamp_inicio": "2026-03-20T09:00:00",
+      "timestamp_fin": "2026-03-20T10:08:20"
+    },
+
+    {
+      "estudiante_id": "E02",
+      "tiempo_total_seg": 3950,
+      "respuestas": ["B", "C", "B", "D", "B", "C", "A", "C", "B", "A", "C", "B", "D", "A", "C"],
+      "tiempo_pregunta_seg": [32, 36, 28, 40, 31, 44, 35, 32, 29, 38, 40, 36, 42, 39, 34],
+      "timestamp_inicio": "2026-03-20T09:01:00",
+      "timestamp_fin": "2026-03-20T10:06:50"
+    },
+
+    {
+      "estudiante_id": "E03",
+      "tiempo_total_seg": 24,
+      "respuestas": ["B", "C", "A", "D", "B", "C", "A", "D", "B", "A", "C", "B", "D", "A", "C"],
+      "tiempo_pregunta_seg": [1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1],
+      "timestamp_inicio": "2026-03-20T09:05:00",
+      "timestamp_fin": "2026-03-20T09:05:24"
+    },
+
+    {
+      "estudiante_id": "E04",
+      "tiempo_total_seg": 4200,
+      "respuestas": ["B", "C", "A", "D", "B", "C", "B", "D", "B", "A", "C", "B", "D", "A", "C"],
+      "tiempo_pregunta_seg": [35, 39, 31, 43, 34, 47, 38, 35, 32, 41, 44, 39, 45, 42, 37],
+      "timestamp_inicio": "2026-03-20T09:00:30",
+      "timestamp_fin": "2026-03-20T10:10:30"
+    }
+  ]
+}

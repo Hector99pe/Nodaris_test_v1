@@ -1,231 +1,112 @@
-Sistema de Auditoría de Exámenes con IA
+# Modus Operandi
 
-Este documento explica cómo funciona el formato de datos utilizado para auditar exámenes académicos mediante un sistema de inteligencia artificial.
+Este documento describe como operar Nodaris en su implementacion actual.
 
-El sistema recibe la información del examen a través de una API en formato JSON. Luego estos datos son analizados para detectar problemas como preguntas difíciles, posibles copias o respuestas inválidas.
+## 1. Modos de entrada
 
-1. Información del examen
+Nodaris soporta cuatro modos:
 
-La sección examen contiene los datos generales del examen.
+- `conversational`: consultas generales sin ejecutar auditoria completa.
+- `individual`: auditoria por `dni` y `nota`.
+- `full_exam`: auditoria de examen completo con `exam_data` y/o `students_data`.
+- `file`: auditoria desde archivo (`file_path`) con extraccion y normalizacion.
 
-Campos:
+El modo lo determina `planner_node` en `src/agent/nodes/planner.py`.
 
-id → Identificador único del examen.
+## 2. Flujo operativo
 
-curso → Nombre del curso.
+1. Planner construye plan segun datos disponibles.
+2. Validation normaliza/valida estructura y reglas base.
+3. Agent reasoner decide herramientas a ejecutar.
+4. Tool executor ejecuta herramientas y actualiza estado.
+5. Reflection evalua cobertura y confianza.
+6. Si confianza baja: replanificacion.
+7. Si confianza suficiente: verificacion hash y reporte final.
 
-codigo_curso → Código académico del curso.
+## 3. Herramientas de auditoria
 
-fecha → Fecha en la que se realizó el examen.
+Catalogo activo en `src/agent/tools/__init__.py`:
 
-duracion_min → Duración del examen en minutos.
+- `calcular_estadisticas`
+- `detectar_plagio`
+- `analizar_abandono`
+- `analizar_tiempos`
+- `evaluar_dificultad`
+- `generar_hash`
+- `extraer_datos_archivo`
+- `normalizar_datos_examen`
+- `solicitar_clarificacion`
 
-Ejemplo:
+## 4. Operacion manual
 
-"examen": {
-"id": "EX001",
-"curso": "Programacion I",
-"codigo_curso": "PROG101",
-"fecha": "2026-03-09",
-"duracion_min": 60
-} 2. Información del docente
+### LangGraph local
 
-El objeto docente identifica al profesor responsable del examen.
+```bash
+langgraph dev
+```
 
-Campos:
+### Tests
 
-dni → Documento nacional de identidad.
+```bash
+python -m pytest tests/unit_tests/
+python -m pytest tests/integration_tests/
+```
 
-nombre → Nombre del docente.
+### Telegram bot
 
-apellido → Apellido del docente.
+Comandos principales:
 
-Ejemplo:
+- `/start`
+- `/help`
+- `/auditar <dni> <nota>`
+- `/auditorias`
+- `/stats`
+- `/estado`
 
-"docente": {
-"dni": "45896321",
-"nombre": "Carlos",
-"apellido": "Ramirez"
-}
+## 5. Operacion autonoma
 
-Esto permite identificar quién diseñó el examen para fines de auditoría académica.
+### Discovery scheduler
 
-3. Supervisores del examen
+```bash
+python -m agent.scheduler.task_scheduler
+```
 
-La sección supervisores contiene los docentes o personal encargado de vigilar el examen.
+Escanea `AUTONOMY_INBOX_PATH` y encola jobs en SQLite.
 
-Campos:
+### Queue consumer
 
-dni
+```bash
+python -m agent.interfaces.queue_consumer
+```
 
-nombre
+Consume jobs pendientes, ejecuta auditoria y mueve archivos a:
 
-apellido
+- `AUTONOMY_PROCESSED_PATH`
+- `AUTONOMY_REVIEW_PATH`
+- `AUTONOMY_FAILED_PATH`
 
-Ejemplo:
+### Herramientas de operacion
 
-"supervisores": [
-{
-"dni": "40125678",
-"nombre": "Laura",
-"apellido": "Gomez"
-}
-]
+```bash
+python -m agent.interfaces.health_check
+python -m agent.interfaces.autonomy_status
+python -m agent.interfaces.review_queue list
+python -m agent.interfaces.dead_letter_queue list
+```
 
-Estos datos se utilizan en auditorías para verificar quién supervisó el proceso de evaluación.
+## 6. Persistencia
 
-4. Rango de respuestas válidas
+`AuditStore` (`src/agent/storage/audit_store.py`) persiste:
 
-El campo respuestas_validas define el rango de respuestas que el sistema acepta.
-
-Ejemplo:
-
-"respuestas_validas": ["A","B","C","D","NR"]
-
-Significado:
-
-A → opción A
-
-B → opción B
-
-C → opción C
-
-D → opción D
-
-NR → No Respondió
-
-Si el sistema recibe otra respuesta, se genera una alerta de auditoría.
-
-5. Preguntas del examen
-
-La sección preguntas contiene las preguntas del examen.
-
-Campos:
-
-id → número de pregunta
-
-tema → tema académico
-
-correcta → respuesta correcta
-
-Ejemplo:
-
-{
-"id":1,
-"tema":"fundamentos",
-"correcta":"B"
-}
-
-Esto permite analizar:
-
-dificultad de la pregunta
-
-rendimiento por tema
-
-calidad del examen
-
-6. Información de estudiantes
-
-La sección estudiantes contiene los datos básicos de cada alumno.
-
-Campos:
-
-id → identificador interno
-
-dni → documento de identidad
-
-nombre
-
-apellido
-
-semestre
-
-Ejemplo:
-
-{
-"id": "E01",
-"dni": "72014589",
-"nombre": "Juan",
-"apellido": "Perez",
-"semestre": 3
-}
-
-Estos datos permiten identificar quién realizó el examen.
-
-7. Resultados del examen
-
-La sección resultados contiene las respuestas de cada estudiante.
-
-Campos:
-
-estudiante_id → referencia al estudiante
-
-tiempo_total_seg → tiempo total del examen
-
-respuestas → respuestas del estudiante
-
-tiempo_pregunta_seg → tiempo que tardó en cada pregunta
-
-timestamp_inicio → hora de inicio
-
-timestamp_fin → hora de finalización
-
-Ejemplo:
-
-{
-"estudiante_id": "E01",
-"tiempo_total_seg": 2700,
-"respuestas": ["B","A","C","D","A","B","C","D","A","B"]
-} 8. Qué analiza el sistema
-
-Con esta estructura el sistema puede analizar:
-
-Dificultad de preguntas
-
-Calculando cuántos estudiantes respondieron correctamente.
-
-Respuestas no respondidas
-
-Detectando valores NR.
-
-Respuestas fuera del rango
-
-Comparando con respuestas_validas.
-
-Posible copia
-
-Comparando patrones de respuestas entre estudiantes.
-
-Comportamientos sospechosos
-
-Analizando tiempos de respuesta por pregunta.
-
-9. Flujo del sistema
-
-El flujo del sistema es el siguiente:
-
-El sistema de examen envía los datos mediante API.
-
-La API recibe el JSON.
-
-Los datos se validan.
-
-El motor de auditoría analiza los resultados.
-
-El sistema genera alertas si detecta anomalías.
-
-Se genera un reporte final para supervisores y directores.
-
-10. Uso con IA
-
-El sistema puede utilizar agentes de inteligencia artificial para:
-
-analizar calidad de preguntas
-
-detectar patrones de copia
-
-generar reportes automáticos
-
-sugerir mejoras en evaluaciones
-
-Esto permite realizar auditorías académicas automáticas en grandes cantidades de exámenes.
+- auditorias (`audits`)
+- hallazgos (`findings`)
+- cola (`audit_jobs`)
+- memoria de aprendizaje (`agent_memory`)
+- dead letters (`dead_letter_jobs`)
+
+## 7. Guardrails
+
+- Circuit breaker LLM.
+- Limites de iteracion y replanificacion.
+- Politicas de revision segun riesgo y confianza.
+- Report guardrail para evitar secciones sin datos.
