@@ -350,12 +350,14 @@ async def send_superdapp_message(conversation_id: str, message: str) -> bool:
     }
 
     try:
+        if Config.SUPERDAPP_DEBUG_WEBHOOK:
+            logger.info("Superdapp async delivery target url=%s", url)
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(url, json=payload, headers=headers)
             response.raise_for_status()
         return True
     except Exception as exc:
-        logger.error("Failed to deliver message to Superdapp API: %s", exc)
+        logger.error("Failed to deliver message to Superdapp API (url=%s): %s", url, exc)
         return False
 
 
