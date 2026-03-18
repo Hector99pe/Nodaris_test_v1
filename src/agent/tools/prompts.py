@@ -5,6 +5,7 @@ from typing import List, Dict
 from langsmith import traceable
 
 _SOUL_PATH = Path(__file__).resolve().parents[3] / "SOUL.md"
+_INSTINCT_PATH = Path(__file__).resolve().parents[3] / "instinct.md"
 
 
 def load_soul() -> str:
@@ -15,13 +16,26 @@ def load_soul() -> str:
     return content
 
 
+def load_instinct() -> str:
+    """Load instinct.md content used for default autonomous behaviour."""
+    content = _INSTINCT_PATH.read_text(encoding="utf-8").strip()
+    if not content:
+        raise ValueError("instinct.md esta vacio. Define el comportamiento base del agente.")
+    return content
+
+
 def build_agent_system_prompt(context: str) -> str:
-    """Build full system prompt from SOUL plus runtime context."""
+    """Build full system prompt from SOUL, instinct, and runtime context."""
     soul = load_soul()
+    instinct = load_instinct()
     context_text = context.strip() if isinstance(context, str) else ""
     if not context_text:
         context_text = "No hay contexto adicional."
-    return f"{soul}\n\nContexto actual:\n{context_text}"
+    return (
+        f"{soul}\n\n"
+        f"Instintos operativos (instinct.md):\n{instinct}\n\n"
+        f"Contexto actual:\n{context_text}"
+    )
 
 
 @traceable(name="buildAuditPrompt")
@@ -35,7 +49,7 @@ def build_audit_prompt(dni: str, nota: int) -> List[Dict[str, str]]:
     Returns:
         List of message dictionaries for LLM
     """
-    system_prompt = load_soul()
+    system_prompt = build_agent_system_prompt("")
 
     user_prompt = f"""Analiza el siguiente registro:
 - DNI: {dni}

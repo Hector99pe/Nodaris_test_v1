@@ -1,7 +1,7 @@
 from pathlib import Path
 import re
 
-from agent.tools.prompts import build_agent_system_prompt, load_soul
+from agent.tools.prompts import build_agent_system_prompt, load_instinct, load_soul
 
 
 def test_soul_file_is_loaded() -> None:
@@ -10,11 +10,24 @@ def test_soul_file_is_loaded() -> None:
     assert "Hard Limits" in soul
 
 
+def test_instinct_file_is_loaded() -> None:
+    instinct = load_instinct()
+    assert "Behavioral Instincts" in instinct
+    assert "Formal Rule Precedence" in instinct
+
+
 def test_agent_system_prompt_uses_soul_and_context() -> None:
     prompt = build_agent_system_prompt("demo-context")
+    assert "Instintos operativos (instinct.md):" in prompt
     assert "Contexto actual:" in prompt
     assert "demo-context" in prompt
     assert "Nodaris" in prompt
+
+
+def test_system_prompt_includes_formal_precedence() -> None:
+    prompt = build_agent_system_prompt("contexto")
+    assert "Formal Rule Precedence" in prompt
+    assert "Hard Limits" in prompt
 
 
 def test_no_hardcoded_system_prompt_in_nodes() -> None:
