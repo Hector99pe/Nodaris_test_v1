@@ -334,6 +334,15 @@ async def send_superdapp_message(
     """Send assistant response back to Superdapp through REST API."""
 
     def _compute_room_id(ctx: dict[str, Any], fallback: str) -> str:
+        # Prefer explicit IDs provided by Superdapp event payload.
+        explicit_room = str(ctx.get("roomId") or "").strip()
+        if explicit_room:
+            return explicit_room
+
+        chat_id = str(ctx.get("chatId") or "").strip()
+        if chat_id:
+            return chat_id
+
         member_id = str(ctx.get("memberId") or "").strip()
         sender_id = str(ctx.get("senderId") or "").strip()
         owner_id = str(ctx.get("owner") or "").strip()
@@ -342,14 +351,6 @@ async def send_superdapp_message(
             return f"{member_id}-{sender_id}"
         if owner_id and sender_id:
             return f"{owner_id}-{sender_id}"
-
-        explicit_room = str(ctx.get("roomId") or "").strip()
-        if explicit_room:
-            return explicit_room
-
-        chat_id = str(ctx.get("chatId") or "").strip()
-        if chat_id:
-            return chat_id
 
         return fallback
 
@@ -362,6 +363,17 @@ async def send_superdapp_message(
     ctx = routing_context or {}
     room_id = _compute_room_id(ctx, conversation_id)
     endpoint = endpoint_template.replace("{roomId}", room_id)
+
+    if Config.SUPERDAPP_DEBUG_WEBHOOK:
+        logger.info(
+            "Superdapp routing ids roomId=%r chatId=%r memberId=%r senderId=%r owner=%r chosen_room_id=%r",
+            ctx.get("roomId"),
+            ctx.get("chatId"),
+            ctx.get("memberId"),
+            ctx.get("senderId"),
+            ctx.get("owner"),
+            room_id,
+        )
 
     if not api_url or not api_key:
         logger.warning("Superdapp API not configured (SUPERDAPP_API_URL/SUPERDAPP_API_KEY)")
