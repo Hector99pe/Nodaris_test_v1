@@ -509,20 +509,25 @@ async def superdapp_webhook(request: Request) -> dict[str, Any]:
     # Strict mode emulates SDK-like compact response (`m` + `t`) to avoid
     # parser ambiguity in some Superdapp tenants.
     if Config.SUPERDAPP_SYNC_STRICT_MODE:
+        compact_message = {"m": compact_body, "t": sync_t}
         response_payload: dict[str, Any] = {
-            "m": compact_body,
-            "t": sync_t,
+            "body": json.dumps(compact_message, ensure_ascii=False),
+            "isSilent": False,
         }
     else:
         # Extended mode keeps aliases for broader compatibility.
+        compact_message = {"m": compact_body, "t": sync_t}
         response_payload = {
             "m": compact_body,
             "t": sync_t,
             "body": response_text,
+            "isSilent": False,
+            "body": response_text,
             "message": response_text,
             "text": response_text,
             "response": response_text,
-            "data": {
+                "body": json.dumps(compact_message, ensure_ascii=False),
+                "isSilent": False,
                 "m": compact_body,
                 "t": sync_t,
                 "body": response_text,
@@ -531,30 +536,31 @@ async def superdapp_webhook(request: Request) -> dict[str, Any]:
                 "response": response_text,
             },
         }
-    if chat_id:
-        response_payload["chatId"] = chat_id
-        if isinstance(response_payload.get("data"), dict):
-            response_payload["data"]["chatId"] = chat_id
-    if room_id:
-        response_payload["roomId"] = room_id
-        if isinstance(response_payload.get("data"), dict):
-            response_payload["data"]["roomId"] = room_id
-    if room_participant_id:
-        response_payload["roomParticipantId"] = room_participant_id
-        if isinstance(response_payload.get("data"), dict):
-            response_payload["data"]["roomParticipantId"] = room_participant_id
-    if member_id:
-        response_payload["memberId"] = member_id
-        if isinstance(response_payload.get("data"), dict):
-            response_payload["data"]["memberId"] = member_id
-    if sender_id:
-        response_payload["senderId"] = sender_id
-        if isinstance(response_payload.get("data"), dict):
-            response_payload["data"]["senderId"] = sender_id
-    if user_id:
-        response_payload["userId"] = user_id
-        if isinstance(response_payload.get("data"), dict):
-            response_payload["data"]["userId"] = user_id
+    if not Config.SUPERDAPP_SYNC_STRICT_MODE:
+        if chat_id:
+            response_payload["chatId"] = chat_id
+            if isinstance(response_payload.get("data"), dict):
+                response_payload["data"]["chatId"] = chat_id
+        if room_id:
+            response_payload["roomId"] = room_id
+            if isinstance(response_payload.get("data"), dict):
+                response_payload["data"]["roomId"] = room_id
+        if room_participant_id:
+            response_payload["roomParticipantId"] = room_participant_id
+            if isinstance(response_payload.get("data"), dict):
+                response_payload["data"]["roomParticipantId"] = room_participant_id
+        if member_id:
+            response_payload["memberId"] = member_id
+            if isinstance(response_payload.get("data"), dict):
+                response_payload["data"]["memberId"] = member_id
+        if sender_id:
+            response_payload["senderId"] = sender_id
+            if isinstance(response_payload.get("data"), dict):
+                response_payload["data"]["senderId"] = sender_id
+        if user_id:
+            response_payload["userId"] = user_id
+            if isinstance(response_payload.get("data"), dict):
+                response_payload["data"]["userId"] = user_id
 
     if Config.SUPERDAPP_ASYNC_DELIVERY_ENABLED:
         if not delivered:

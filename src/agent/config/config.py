@@ -34,7 +34,7 @@ class Config:
     SUPERDAPP_ASYNC_DELIVERY_ENABLED: bool = os.getenv(
         "SUPERDAPP_ASYNC_DELIVERY_ENABLED", "false"
     ).lower() == "true"
-    SUPERDAPP_SYNC_T: str = os.getenv("SUPERDAPP_SYNC_T", "message")
+    SUPERDAPP_SYNC_T: str = os.getenv("SUPERDAPP_SYNC_T", "chat")
     SUPERDAPP_SYNC_STRICT_MODE: bool = os.getenv(
         "SUPERDAPP_SYNC_STRICT_MODE", "true"
     ).lower() == "true"
