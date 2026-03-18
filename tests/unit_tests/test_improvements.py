@@ -138,6 +138,5 @@ class TestAdminNotification:
         assert hasattr(Config, "TELEGRAM_ADMIN_CHAT_ID")
 
     def test_notify_function_exists(self):
-        from agent.interfaces.queue_consumer import _notify_admin_failed_job
-        import asyncio
-        assert callable(_notify_admin_failed_job)
+        from agent.interfaces.queue_consumer import _notify_admin
+        assert callable(_notify_admin)

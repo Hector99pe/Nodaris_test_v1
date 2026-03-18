@@ -1,283 +1,106 @@
-# 🏗️ Arquitectura de 5 Capas - Nodaris Agent
+# Arquitectura de 5 Capas - Nodaris
 
-## ✅ Implementación Completa
+Documento actualizado segun el codigo real en `src/agent/`.
 
-La arquitectura completa de 5 capas ha sido implementada exitosamente en `src/agent/graph/graph.py`.
+## Vista General
 
-## 📐 Diagrama de Arquitectura
+Nodaris usa un flujo agentico en LangGraph con ciclo ReAct:
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    CAPA 1: INTERFACES                        │
-│  ┌─────────────────┐              ┌────────────────────┐   │
-│  │  Telegram Bot   │              │   API Interface    │   │
-│  │ telegram_bot.py │              │ api_interface.py   │   │
-│  └────────┬────────┘              └─────────┬──────────┘   │
-└───────────┼──────────────────────────────────┼──────────────┘
-            │                                  │
-            └──────────────┬───────────────────┘
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    CAPA 2: PLANNER IA                        │
-│                     planner_node                             │
-│                                                              │
-│  • Analiza consultas del usuario                            │
-│  • Diseña plan de ejecución                                 │
-│  • Determina qué validaciones aplicar                       │
-│                                                              │
-│  Prompt Guide: prompts/planner_prompt.md                    │
-└────────────────────────────┬────────────────────────────────┘
-                             ▼
-┌─────────────────────────────────────────────────────────────┐
-│                 CAPA 3: ANALYSIS NODES                       │
-│                                                              │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐ │
-│  │ Validation   │ →  │  Analysis    │ →  │ Verification │ │
-│  │              │    │              │    │              │ │
-│  │ • Valida DNI │    │ • Analiza    │    │ • Genera     │ │
-│  │ • Valida     │    │   con LLM    │    │   hash SHA   │ │
-│  │   nota       │    │ • Detecta    │    │ • Timestamp  │ │
-│  │ • Reglas     │    │   anomalías  │    │ • Auditoría  │ │
-│  └──────────────┘    └──────────────┘    └──────────────┘ │
-│                                                              │
-│  Usa: nodes/validation.py, analysis.py, verification.py     │
-└────────────────────────────┬────────────────────────────────┘
-                             ▼
-                ┌────────────────────────┐
-                │    CAPA 4: TOOLS       │
-                │                        │
-                │  Herramientas usadas   │
-                │  por los nodos:        │
-                │                        │
-                │  • crypto.py           │
-                │  • prompts.py          │
-                │  • dificultad.py       │
-                │  • copia.py            │
-                │  • tiempos.py          │
-                │  • validacion.py       │
-                └────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────┐
-│              CAPA 5: REPORT + MEMORY                         │
-│                                                              │
-│  ┌──────────────────┐         ┌─────────────────────┐      │
-│  │  Reflection      │    →    │  Report Generator   │      │
-│  │                  │         │                     │      │
-│  │ • Revisa         │         │ • Genera reporte    │      │
-│  │   análisis       │         │   profesional       │      │
-│  │ • Identifica     │         │ • Formatea          │      │
-│  │   mejoras        │         │   resultados        │      │
-│  │ • Valida         │         │ • Incluye hash      │      │
-│  │   calidad        │         │                     │      │
-│  └──────────────────┘         └─────────┬───────────┘      │
-│                                          │                  │
-│  Usa: nodes/reflection.py, report.py    │                  │
-│  Prompt: prompts/report_prompt.md       │                  │
-└─────────────────────────────────────────┼──────────────────┘
-                                          ▼
-                              ┌─────────────────────┐
-                              │  Memory Manager     │
-                              │  memory_manager.py  │
-                              │                     │
-                              │  • Almacena         │
-                              │    historial        │
-                              │  • Contexto         │
-                              │  • Trazabilidad     │
-                              └─────────────────────┘
+1. Planner
+2. Validation (solo en primera pasada)
+3. Agent Reasoner + Tool Executor (bucle)
+4. Reflection (calidad y cobertura)
+5. Verification + Report
+
+## Flujo del Grafo
+
+Implementado en `src/agent/graph/graph.py`.
+
+```text
+START -> planner
+planner -> validate (primera ejecucion) | agent_reasoner (replan)
+validate -> END (error) | agent_reasoner
+agent_reasoner -> tool_executor -> agent_reasoner (mientras haya tool calls)
+agent_reasoner -> reflection (cuando ya no pide herramientas)
+reflection -> planner (si baja confianza) | verify | END
+verify -> report -> END
 ```
 
-## 🔄 Flujo de Ejecución
+## Capa 1 - Interfaces
 
-### Flujo Completo (Happy Path):
+Ubicacion: `src/agent/interfaces/`
 
-```
-1. User/API/Telegram
-        ↓
-2. Interface Layer (telegram_bot.py / api_interface.py)
-        ↓
-3. Planner Node
-        ↓
-4. Validation Node
-        ↓
-5. Analysis Node
-        ↓
-6. Verification Node
-        ↓
-7. Reflection Node
-        ↓
-8. Report Node
-        ↓
-9. Memory/Storage
-        ↓
-10. Response to User
-```
+- `telegram_bot.py`: interfaz conversacional y comandos operativos.
+- `health_check.py`: chequeo integral de configuracion y colas.
+- `autonomy_status.py`: estado de cola autonoma.
+- `review_queue.py`: decisiones manuales sobre jobs en revision.
+- `dead_letter_queue.py`: inspeccion y reencolado de dead letters.
+- `queue_consumer.py`: consumidor de trabajos autonomos.
 
-### Flujo con Error:
+## Capa 2 - Planner
 
-```
-1-4. (Same)
-        ↓
-5. Validation Node → ERROR
-        ↓
-6. END (Sin continuar procesamiento)
-```
+Ubicacion: `src/agent/nodes/planner.py`
 
-## 📝 Código de Implementación
+Responsabilidades:
 
-El flujo está implementado en [`src/agent/graph/graph.py`](../src/agent/graph/graph.py):
+- Determinar modo: `conversational`, `individual`, `full_exam`, `file`.
+- Construir un plan textual para el reasoner.
+- Sugerir herramientas segun contexto de datos.
+- Aplicar priorizacion por memoria historica (`agent_memory`).
+- En replanificacion, inyectar feedback de reflexion.
 
-```python
-# Entry: Start → Planner
-workflow.add_edge("__start__", "planner")
+## Capa 3 - Analisis Agentico
 
-# Layer 2 → Layer 3: Planner → Validation
-workflow.add_edge("planner", "validate")
+Ubicacion: `src/agent/nodes/agent_reasoner.py` + `src/agent/graph/graph.py`
 
-# Layer 3: Analysis Pipeline
-workflow.add_conditional_edges(
-    "validate",
-    should_continue_after_validation,
-    {"analyze": "analyze", END: END}
-)
-workflow.add_edge("analyze", "verify")
+Responsabilidades:
 
-# Layer 3 → Layer 5: Verification → Reflection
-workflow.add_edge("verify", "reflection")
+- `agent_reasoner`: LLM con `bind_tools(AUDIT_TOOLS)` decide siguiente accion.
+- `smart_tool_executor`: ejecuta herramientas, inyecta datos normalizados al estado,
+  maneja hints de recuperacion y cachea resultados repetidos.
+- Control de iteraciones: `MAX_AGENT_ITERATIONS`.
 
-# Layer 5: Reflection → Report
-workflow.add_conditional_edges(
-    "reflection",
-    should_continue_after_reflection,
-    {"report": "report"}
-)
+## Capa 4 - Tools
 
-# Exit: Report → End
-workflow.add_edge("report", END)
-```
+Ubicacion: `src/agent/tools/`
 
-## 🎯 Responsabilidades por Capa
+Catalogo principal (`AUDIT_TOOLS`):
 
-### CAPA 1: INTERFACES
+- `tool_calcular_estadisticas`
+- `tool_detectar_plagio`
+- `tool_analizar_abandono`
+- `tool_analizar_tiempos`
+- `tool_evaluar_dificultad`
+- `tool_generar_hash`
+- `tool_extraer_datos_archivo`
+- `tool_normalizar_datos_examen`
+- `tool_solicitar_clarificacion`
 
-**Ubicación:** `src/agent/interfaces/`
+## Capa 5 - Reflection, Verification y Reporte
 
-| Componente   | Archivo            | Responsabilidad                       |
-| ------------ | ------------------ | ------------------------------------- |
-| Telegram Bot | `telegram_bot.py`  | Interfaz conversacional via Telegram  |
-| REST API     | `api_interface.py` | Interfaz HTTP/REST para integraciones |
+Ubicacion: `src/agent/nodes/reflection.py`, `src/agent/nodes/verification.py`, `src/agent/nodes/report.py`
 
-**Estado:** ✅ Implementado
+Responsabilidades:
 
----
+- `reflection`: extrae hallazgos desde ToolMessages, calcula cobertura y confianza,
+  puede forzar replanificacion.
+- `verification`: genera hash verificable del payload auditado.
+- `report`: construye reporte final, aplica guardrails y persiste auditoria.
 
-### CAPA 2: PLANNER IA
+## Persistencia y Autonomia
 
-**Ubicación:** `src/agent/nodes/planner.py`
+Ubicacion: `src/agent/storage/audit_store.py`, `src/agent/nodes/discovery.py`, `src/agent/scheduler/task_scheduler.py`
 
-**Responsabilidades:**
+- Persistencia SQLite para auditorias, findings, jobs, memoria de aprendizaje y dead letters.
+- Discovery de archivos (`data/inbox`) con `risk_scoring` para priorizar jobs.
+- Scheduler y consumer para ejecucion autonoma por lotes.
 
-- Interpretar la consulta del usuario
-- Determinar el tipo de auditoría necesaria
-- Planificar qué validaciones ejecutar
-- Preparar el estado para los nodos de análisis
+## Guardrails Activos
 
-**Prompt Guide:** `src/agent/prompts/planner_prompt.md`
-
-**Estado:** ⚠️ Estructura lista, lógica pendiente de implementación
-
----
-
-### CAPA 3: ANALYSIS NODES
-
-**Ubicación:** `src/agent/nodes/`
-
-| Nodo         | Archivo           | Responsabilidad                          |
-| ------------ | ----------------- | ---------------------------------------- |
-| Validation   | `validation.py`   | Valida DNI, nota y reglas de negocio     |
-| Analysis     | `analysis.py`     | Análisis con LLM, detección de anomalías |
-| Verification | `verification.py` | Genera hash criptográfico y timestamp    |
-
-**Estado:** ✅ Implementado y funcionando
-
----
-
-### CAPA 4: TOOLS
-
-**Ubicación:** `src/agent/tools/`
-
-| Tool       | Archivo         | Funcionalidad                        |
-| ---------- | --------------- | ------------------------------------ |
-| Crypto     | `crypto.py`     | Generación de hashes SHA-256         |
-| Prompts    | `prompts.py`    | Construcción de prompts para LLM     |
-| Dificultad | `dificultad.py` | Evaluación de dificultad de exámenes |
-| Copia      | `copia.py`      | Backup y gestión de copias           |
-| Tiempos    | `tiempos.py`    | Gestión de tiempos de examen         |
-| Validación | `validacion.py` | Validaciones académicas              |
-
-**Estado:** ✅ Implementado (6 herramientas disponibles)
-
----
-
-### CAPA 5: REPORT + MEMORY
-
-**Ubicación:** `src/agent/nodes/` y `src/agent/memory/`
-
-| Componente     | Archivo             | Responsabilidad                      |
-| -------------- | ------------------- | ------------------------------------ |
-| Reflection     | `reflection.py`     | Auto-evaluación de resultados        |
-| Report         | `report.py`         | Generación de reportes profesionales |
-| Memory Manager | `memory_manager.py` | Gestión de historial y contexto      |
-
-**Prompt Guide:** `src/agent/prompts/report_prompt.md`
-
-**Estado:**
-
-- Memory Manager: ✅ Implementado
-- Reflection: ⚠️ Estructura lista, lógica pendiente
-- Report: ⚠️ Estructura lista, lógica pendiente
-
----
-
-## 🧪 Estado de Implementación
-
-| Componente                 | Estado      | Próximos Pasos                      |
-| -------------------------- | ----------- | ----------------------------------- |
-| **Graph Architecture**     | ✅ Completo | Testing de flujo completo           |
-| **Layer 1: Interfaces**    | ✅ Completo | -                                   |
-| **Layer 2: Planner**       | ⚠️ Parcial  | Implementar lógica de planificación |
-| **Layer 3: Analysis**      | ✅ Completo | -                                   |
-| **Layer 4: Tools**         | ✅ Completo | -                                   |
-| **Layer 5: Report/Memory** | ⚠️ Parcial  | Implementar reflection y report     |
-
-## 🚀 Ventajas de la Arquitectura
-
-### 1. **Modularidad**
-
-Cada capa tiene responsabilidades claras y puede modificarse independientemente.
-
-### 2. **Escalabilidad**
-
-Fácil agregar nuevos nodos, herramientas o interfaces sin afectar otras capas.
-
-### 3. **Mantenibilidad**
-
-Código organizado por función, facilitando debugging y updates.
-
-### 4. **Trazabilidad**
-
-Cada paso del flujo está documentado y puede ser rastreado.
-
-### 5. **Flexibilidad**
-
-El routing condicional permite diferentes flujos según el resultado de cada nodo.
-
-## 📚 Referencias
-
-- **Graph Definition:** [`src/agent/graph/graph.py`](../src/agent/graph/graph.py)
-- **State Schema:** [`src/agent/state/state.py`](../src/agent/state/state.py)
-- **Node Implementations:** [`src/agent/nodes/`](../src/agent/nodes/)
-- **Tools:** [`src/agent/tools/`](../src/agent/tools/)
+- Circuit breaker para llamadas LLM (`src/agent/resilience.py`).
+- Limite de iteraciones de agente y de replans de reflexion.
+- Report guardrail para eliminar secciones sin respaldo de datos.
+- Politicas de revision manual para jobs de riesgo/alta incertidumbre.
 - **Configuration:** [`src/agent/config/config.py`](../src/agent/config/config.py)
 
 ## 🔍 Testing del Flujo

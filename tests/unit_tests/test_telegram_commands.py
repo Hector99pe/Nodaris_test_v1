@@ -63,6 +63,16 @@ class TestCommandHandlersExist:
         import asyncio
         assert asyncio.iscoroutinefunction(estado_command)
 
+    def test_revision_command_exists(self):
+        from agent.interfaces.telegram_bot import revision_command
+        import asyncio
+        assert asyncio.iscoroutinefunction(revision_command)
+
+    def test_reporte_command_exists(self):
+        from agent.interfaces.telegram_bot import reporte_command
+        import asyncio
+        assert asyncio.iscoroutinefunction(reporte_command)
+
     def test_help_command_exists(self):
         from agent.interfaces.telegram_bot import help_command
         import asyncio
@@ -79,5 +89,7 @@ class TestCommandsMenu:
         assert "/info" in _COMMANDS_MENU
         assert "/auditar" in _COMMANDS_MENU
         assert "/auditorias" in _COMMANDS_MENU
+        assert "/reporte" in _COMMANDS_MENU
+        assert "/revision" in _COMMANDS_MENU
         assert "/stats" in _COMMANDS_MENU
         assert "/estado" in _COMMANDS_MENU

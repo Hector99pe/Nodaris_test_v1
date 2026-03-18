@@ -428,6 +428,7 @@ def report_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "reporte_final": final_report,
+        "quality_evaluation": quality_eval,
         "status": "completed",
         "mensaje": mensaje,
     }

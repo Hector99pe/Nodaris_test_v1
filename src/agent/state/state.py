@@ -52,7 +52,9 @@ class AcademicAuditState(TypedDict, total=False):
     # Specific detections
     copias_detectadas: List[Dict[str, Any]]
     tiempos_sospechosos: List[str]
+    tiempos_detalle: List[Dict[str, Any]]
     respuestas_nr: List[str]
+    abandono_detalle: List[Dict[str, Any]]
 
     # Statistics
     promedio: float

@@ -45,6 +45,14 @@ from agent.storage.audit_store import AuditStore
 _graph = get_graph_with_memory()
 
 AUDIT_USAGE: Final[str] = "Uso: /auditar &lt;dni&gt; &lt;nota&gt;. Ejemplo: /auditar 12345678 15"
+REPORT_USAGE: Final[str] = (
+    "Uso:\n"
+    "• /reporte &lt;audit_id&gt;\n"
+    "• /reporte hash &lt;prefijo_hash&gt;\n"
+    "• /reporte dni &lt;dni&gt;\n"
+    "• /reporte examen &lt;exam_id&gt;\n"
+    "• /reporte alumno &lt;dni_o_nombre&gt;"
+)
 
 # Track pending interrupts per chat (for human-in-the-loop)
 pending_interrupts: dict[int, str] = {}  # chat_id -> thread_id
@@ -81,9 +89,39 @@ _COMMANDS_MENU: Final[str] = (
     "• /info - Información del sistema\n"
     "• /auditar &lt;dni&gt; &lt;nota&gt; - Auditoría rápida\n"
     "• /auditorias - Últimas auditorías registradas\n"
+    "• /reporte - Ver reporte completo guardado\n"
+    "• /revision - Jobs pendientes de revisión manual\n"
     "• /stats - Estadísticas de la cola de jobs\n"
     "• /estado - Estado operativo del sistema"
 )
+
+
+def _split_long_text(text: str, max_len: int = 3500) -> list[str]:
+    """Split long text into Telegram-safe chunks preserving lines when possible."""
+    src = str(text or "")
+    if len(src) <= max_len:
+        return [src]
+
+    chunks: list[str] = []
+    remaining = src
+    while len(remaining) > max_len:
+        cut = remaining.rfind("\n", 0, max_len)
+        if cut < max_len // 2:
+            cut = max_len
+        chunks.append(remaining[:cut].rstrip())
+        remaining = remaining[cut:].lstrip("\n")
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
+async def _reply_long_report(message, report_text: str) -> None:
+    """Reply a full report in one or multiple plain-text messages."""
+    chunks = _split_long_text(report_text, max_len=3500)
+    total = len(chunks)
+    for i, chunk in enumerate(chunks, start=1):
+        header = "Reporte:\n" if i == 1 else f"Reporte (continuación {i}/{total}):\n"
+        await message.reply_text(header + chunk)
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -186,7 +224,15 @@ async def auditorias_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         dni = a["dni"] or "—"
         hash_short = a["audit_hash"][:8] if a["audit_hash"] else "—"
 
-        icon = "✅" if status == "success" else ("❌" if status == "error" else "⏳")
+        normalized = str(status).lower()
+        ok_statuses = {"success", "completed", "ok"}
+        error_statuses = {"error", "failed", "fail"}
+        if normalized in ok_statuses:
+            icon = "✅"
+        elif normalized in error_statuses:
+            icon = "❌"
+        else:
+            icon = "⏳"
         lines.append(
             f"{icon} <b>#{a['id']}</b> | {html.escape(date)}\n"
             f"   Modo: {html.escape(mode)} | DNI: {html.escape(dni)}\n"
@@ -194,6 +240,261 @@ async def auditorias_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
 
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+
+async def revision_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /revision command - list jobs pending manual review."""
+    _ = context
+    if update.message is None:
+        return
+
+    try:
+        store = AuditStore()
+        jobs = store.list_review_jobs(limit=10)
+    except Exception as e:
+        logger.error("Error listing review jobs: %s", e)
+        await update.message.reply_text("❌ Error al consultar jobs en revisión.")
+        return
+
+    if not jobs:
+        await update.message.reply_text("🔍 No hay jobs pendientes de revisión manual.")
+        return
+
+    lines = ["🔍 <b>Jobs en revisión manual</b>\n"]
+    for j in jobs:
+        file_name = Path(str(j.get("source_ref", ""))).name or "—"
+        reason = str(j.get("reason") or "Sin detalle")
+        lines.append(
+            f"🧾 <b>Job #{j['id']}</b> | Riesgo: <b>{html.escape(str(j['risk_label']))}</b>\n"
+            f"   Archivo: {html.escape(file_name)}\n"
+            f"   Intentos: {j['attempt_count']}/{j['max_attempts']}\n"
+            f"   Razón: {html.escape(reason[:160])}"
+        )
+
+    await update.message.reply_text("\n\n".join(lines), parse_mode=ParseMode.HTML)
+
+
+def _resolve_student_name(token: str, findings: dict) -> str | None:
+    """Try to derive the student's full name from finding dicts or legacy string labels."""
+    for ftype in ("tiempos", "abandono"):
+        for item in findings.get(ftype, []):
+            if isinstance(item, dict):
+                nombre = str(item.get("nombre", "")).strip()
+                apellido = str(item.get("apellido", "")).strip()
+                full = " ".join(p for p in [nombre, apellido] if p)
+                if full:
+                    return full
+            elif isinstance(item, str) and " — " in item:
+                name_part = item.split(" — ", 1)[1].split(" (")[0].strip()
+                if name_part:
+                    return name_part
+    return None
+
+
+def _format_tiempos_item(item: object) -> list[str]:
+    """Format one tiempos finding entry (dict or legacy string)."""
+    if isinstance(item, dict):
+        dni = html.escape(str(item.get("dni", "")))
+        nombre = html.escape(str(item.get("nombre", "")))
+        apellido = html.escape(str(item.get("apellido", "")))
+        full_name = " ".join(p for p in [nombre, apellido] if p) or "—"
+        razon = html.escape(str(item.get("razon", "")))
+        tiempo_seg = item.get("tiempo_seg")
+        porcentaje = item.get("porcentaje_usado")
+        lines = [f"  🪪 {dni} — {full_name}"]
+        if razon:
+            lines.append(f"  ⚠️ Razón: {razon}")
+        if tiempo_seg is not None:
+            lines.append(f"  🕐 Tiempo usado: {int(tiempo_seg)} seg")
+        if porcentaje is not None:
+            lines.append(f"  📉 Porcentaje del tiempo: {porcentaje}%")
+        return lines
+    # Legacy string label
+    return [f"  • {html.escape(str(item))}"]
+
+
+def _format_abandono_item(item: object) -> list[str]:
+    """Format one abandono finding entry (dict or legacy string)."""
+    if isinstance(item, dict):
+        dni = html.escape(str(item.get("dni", "")))
+        nombre = html.escape(str(item.get("nombre", "")))
+        apellido = html.escape(str(item.get("apellido", "")))
+        full_name = " ".join(p for p in [nombre, apellido] if p) or "—"
+        tipo = str(item.get("tipo", ""))
+        vacias = item.get("respuestas_vacias")
+        total = item.get("total_preguntas")
+        pct = item.get("porcentaje_vacio")
+        lines = [f"  🪪 {dni} — {full_name}"]
+        if tipo:
+            tipo_label = "Total" if tipo == "ABANDONO_TOTAL" else "Parcial"
+            lines.append(f"  ⚠️ Tipo: Abandono {tipo_label}")
+        if vacias is not None and total is not None:
+            lines.append(f"  📋 Respuestas vacías: {vacias}/{total}")
+        if pct is not None:
+            lines.append(f"  📉 Porcentaje vacío: {pct}%")
+        return lines
+    return [f"  • {html.escape(str(item))}"]
+
+
+def _build_student_card(report: dict, student_token: str, findings: dict) -> str:
+    """Build a structured individual-student HTML card from an audit report."""
+    score = report.get("confidence_score")
+    score_text = f"{float(score):.0%}" if score is not None else "N/A"
+    created = str(report.get("created_at") or "")[:16].replace("T", " ")
+    audit_hash = str(report.get("audit_hash") or "")[:16]
+
+    student_name = _resolve_student_name(student_token, findings) or student_token
+
+    lines = [
+        f"👤 <b>Informe Individual</b>",
+        f"🪪 Alumno: <b>{html.escape(student_name)}</b>",
+        f"🔎 Búsqueda: <code>{html.escape(student_token)}</code>",
+        f"📘 Examen: <b>{html.escape(str(report.get('exam_id') or '—'))}</b>",
+        f"📅 Fecha: {html.escape(created)}",
+        f"📈 Confianza del análisis: {score_text}",
+    ]
+    if audit_hash:
+        lines.append(f"🔐 Hash: <code>{html.escape(audit_hash)}</code>")
+    lines.append("")
+
+    if not findings:
+        lines.append("✅ Sin anomalías detectadas para este estudiante.")
+        return "\n".join(lines)
+
+    if "tiempos" in findings:
+        lines.append("⏱️ <b>Tiempo sospechoso</b>")
+        for item in findings["tiempos"]:
+            lines.extend(_format_tiempos_item(item))
+
+    if "abandono" in findings:
+        lines.append("🚫 <b>Abandono / No Responde</b>")
+        for item in findings["abandono"]:
+            lines.extend(_format_abandono_item(item))
+
+    if "plagio" in findings:
+        lines.append("🔴 <b>Plagio detectado</b>")
+        for caso in findings["plagio"]:
+            e1 = html.escape(str(caso.get("estudiante1", "?")))
+            e2 = html.escape(str(caso.get("estudiante2", "?")))
+            sim = caso.get("similitud_promedio", 0)
+            nivel = html.escape(str(caso.get("nivel_sospecha", "")))
+            pregs = caso.get("preguntas_similares", "?")
+            lines.append(f"  🪪 {e1} ↔ {e2}")
+            lines.append(f"  ⚠️ Preguntas similares: {pregs}")
+            lines.append(f"  📊 Similitud: {float(sim):.0%} | Nivel: {nivel}")
+
+    return "\n".join(lines)
+
+
+async def reporte_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /reporte command - show persisted report by id or filters."""
+    if update.message is None:
+        return
+
+    args = context.args or []
+    if not args:
+        await update.message.reply_text(REPORT_USAGE, parse_mode=ParseMode.HTML)
+        return
+
+    store = AuditStore()
+    report = None
+    student_filter: str | None = None  # set when querying by individual student
+
+    try:
+        if len(args) == 1 and args[0].isdigit():
+            report = store.get_audit_report_by_id(int(args[0]))
+        elif len(args) >= 2:
+            key = args[0].strip().lower()
+            value = " ".join(args[1:]).strip()
+            if not value:
+                await update.message.reply_text(REPORT_USAGE, parse_mode=ParseMode.HTML)
+                return
+
+            if key == "hash":
+                matches = store.find_audits(hash_prefix=value, limit=10)
+            elif key == "dni":
+                matches = store.find_audits(dni=value, limit=10)
+            elif key in {"examen", "exam"}:
+                matches = store.find_audits(exam_id=value, limit=10)
+            elif key == "alumno":
+                matches = store.find_audits(alumno=value, limit=10)
+                student_filter = value
+            else:
+                await update.message.reply_text(
+                    f"❌ Filtro no soportado: {html.escape(key)}\n\n{REPORT_USAGE}",
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+
+            if not matches:
+                await update.message.reply_text("📭 No se encontraron reportes para ese criterio.")
+                return
+
+            report = matches[0]
+            if len(matches) > 1:
+                preview = ["📚 <b>Coincidencias (más reciente primero)</b>"]
+                for m in matches[:5]:
+                    score = m.get("confidence_score")
+                    score_text = f"{float(score):.0%}" if score is not None else "N/A"
+                    preview.append(
+                        f"• #{m['id']} | examen: {html.escape(str(m.get('exam_id') or '—'))} | "
+                        f"dni: {html.escape(str(m.get('dni') or '—'))} | conf: {score_text}"
+                    )
+                preview.append(f"\nMostrando el reporte más reciente: <b>#{report['id']}</b>")
+                await update.message.reply_text("\n".join(preview), parse_mode=ParseMode.HTML)
+        else:
+            await update.message.reply_text(REPORT_USAGE, parse_mode=ParseMode.HTML)
+            return
+    except Exception as e:
+        logger.error("Error getting report: %s", e, exc_info=True)
+        await update.message.reply_text("❌ Error al consultar el reporte solicitado.")
+        return
+
+    if not report:
+        await update.message.reply_text("📭 No se encontró el reporte solicitado.")
+        return
+
+    # Individual student view
+    if student_filter is not None:
+        student_findings = store.get_student_findings_from_audit(report["id"], student_filter)
+        card = _build_student_card(report, student_filter, student_findings)
+        await update.message.reply_text(card, parse_mode=ParseMode.HTML)
+        return
+
+    # Full exam / hash / id report
+    report_text = str(report.get("report_text") or "")
+    if not report_text.strip():
+        await update.message.reply_text("📭 El reporte existe pero no tiene contenido de texto.")
+        return
+
+    meta = (
+        f"🧾 <b>Reporte #{report['id']}</b>\n"
+        f"📘 Examen: {html.escape(str(report.get('exam_id') or '—'))}\n"
+        f"👤 DNI: {html.escape(str(report.get('dni') or '—'))}\n"
+        f"🔐 Hash: <code>{html.escape(str(report.get('audit_hash') or '')[:16])}</code>"
+    )
+    await update.message.reply_text(meta, parse_mode=ParseMode.HTML)
+    await _reply_long_report(update.message, report_text)
+
+
+def _is_review_query(user_message: str) -> bool:
+    """Return True when user asks to list items pending manual review."""
+    text = user_message.lower()
+    keywords = [
+        "en revision",
+        "en revisión",
+        "pendientes de revision",
+        "pendientes de revisión",
+        "casos en revision",
+        "casos en revisión",
+        "jobs en revision",
+        "jobs en revisión",
+        "mostrar revision",
+        "mostrar revisión",
+        "ver los que estan en revision",
+        "ver los que están en revisión",
+    ]
+    return any(k in text for k in keywords)
 
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -497,6 +798,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 )
             return
 
+        # Fast path for operational request: review queue listing
+        if _is_review_query(user_message):
+            await revision_command(update, context)
+            return
+
         # Normal conversation — inject cached exam data as state if available
         # Use dynamic thread_id that resets on each file upload
         if chat_id not in _chat_thread_ids:
@@ -593,6 +899,8 @@ def run_telegram_bot() -> None:
     app.add_handler(CommandHandler("auditar", auditar_command))
     app.add_handler(CommandHandler("info", info_command))
     app.add_handler(CommandHandler("auditorias", auditorias_command))
+    app.add_handler(CommandHandler("reporte", reporte_command))
+    app.add_handler(CommandHandler("revision", revision_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("estado", estado_command))
 

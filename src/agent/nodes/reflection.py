@@ -38,8 +38,14 @@ def _extract_tool_results(state: Dict[str, Any]) -> Dict[str, Any]:
             updates["copias_detectadas"] = data.get("copias_detectadas", [])
         elif tipo == "abandono":
             updates["respuestas_nr"] = data.get("estudiantes_nr", [])
+            detalle_ab = data.get("detalle_abandono", [])
+            if detalle_ab:
+                updates["abandono_detalle"] = detalle_ab
         elif tipo == "tiempos":
             updates["tiempos_sospechosos"] = data.get("sospechosos", [])
+            detalle_t = data.get("detalle", [])
+            if detalle_t:
+                updates["tiempos_detalle"] = detalle_t
         elif tipo == "dificultad":
             updates["preguntas_dificiles"] = data.get("preguntas_dificiles", 0)
         elif tipo == "archivo":

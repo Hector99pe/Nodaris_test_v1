@@ -74,12 +74,16 @@ async def test_consumer_requeues_job_when_circuit_breaker_is_open(monkeypatch, t
     async def _raise_open(*_args, **_kwargs):
         raise CircuitBreakerOpenError(12)
 
+    async def _astream_raise(*_args, **_kwargs):
+        raise CircuitBreakerOpenError(12)
+        yield  # make it an async generator
+
     monkeypatch.setattr(queue_consumer, "AuditStore", lambda: store)
-    monkeypatch.setattr(queue_consumer.graph, "ainvoke", _raise_open)
+    monkeypatch.setattr(queue_consumer.graph, "astream", _astream_raise)
 
     processed = await queue_consumer.consume_once()
 
-    assert processed is False
+    assert processed == "released"
     stats = store.get_job_stats()
     assert stats["pending"] == 1
     assert stats["failed"] == 0

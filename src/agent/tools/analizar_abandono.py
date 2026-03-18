@@ -158,13 +158,15 @@ def tool_analizar_abandono(
     estudiantes_nr = identificar_nr(students_data)
     analisis = analizar_abandono(estudiantes_nr, len(students_data))
 
-    # Build display labels: prefer "DNI nombre" format
+    # Build display labels and enrich detail dicts with nombre/apellido
     student_labels = []
     students_by_dni = {s.get("dni", ""): s for s in students_data if s.get("dni")}
     for e in estudiantes_nr:
         dni = e.get("dni", "")
         base = students_by_dni.get(dni, {})
         nombre = base.get("nombre", "")
+        e["nombre"] = nombre
+        e["apellido"] = base.get("apellido", "")
         pct = e.get("porcentaje_vacio", 0)
         label = f"{dni} — {nombre}" if nombre else (dni or "Desconocido")
         label += f" ({pct:.0f}% vacío)" if pct < 100 else " (no respondió)"
