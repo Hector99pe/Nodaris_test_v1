@@ -22,8 +22,8 @@ RUN pip install --upgrade pip && \
 # Crear directorios necesarios para la auditoría
 RUN mkdir -p data/inbox data/processed data/review data/failed
 
-# Exponer puerto si se usa LangGraph Studio en futuro
-EXPOSE 3000 8000
+# Exponer puertos
+EXPOSE 8443
 
 # Ejecutar todos los servicios
 ENTRYPOINT ["./entrypoint.sh"]

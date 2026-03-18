@@ -13,7 +13,7 @@ python -m agent.interfaces.health_check || echo "⚠️ Health check completado 
 # Función para manejar señales
 cleanup() {
     echo "⛔ Deteniendo servicios..."
-    kill $SCHEDULER_PID $CONSUMER_PID $TELEGRAM_PID 2>/dev/null || true
+    kill $SCHEDULER_PID $CONSUMER_PID $TELEGRAM_PID $SUPERDAPP_PID 2>/dev/null || true
     wait
     echo "✓ Servicios detenidos"
 }
@@ -43,12 +43,26 @@ else
     TELEGRAM_PID=""
 fi
 
+# Iniciar Superdapp Webhook (API FastAPI)
+if [ -n "$SUPERDAPP_API_KEY" ]; then
+    echo "🌐 Iniciando Superdapp Webhook..."
+    python -m agent.interfaces.superdapp_bot &
+    SUPERDAPP_PID=$!
+    sleep 2
+else
+    echo "⚠️ SUPERDAPP_API_KEY no configurado - Superdapp Webhook deshabilitado"
+    SUPERDAPP_PID=""
+fi
+
 echo "✅ Todos los servicios iniciados"
 echo "📊 Monitoreo activo:"
 echo "   - Scheduler: descubriendo archivos en data/inbox/"
 echo "   - Consumer: procesando auditorías"
 if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
     echo "   - Telegram Bot: escuchando comandos"
+fi
+if [ -n "$SUPERDAPP_API_KEY" ]; then
+    echo "   - Superdapp Webhook: http://0.0.0.0:8443/superdapp/webhook"
 fi
 
 # Mantener el contenedor vivo
