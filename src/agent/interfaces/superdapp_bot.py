@@ -483,15 +483,26 @@ async def superdapp_webhook(request: Request) -> dict[str, Any]:
         logger.exception("Error processing Superdapp message")
         response_text = f"Error interno procesando mensaje: {str(exc)[:200]}"
 
-    routing_context = payload if isinstance(payload, dict) else None
-    delivered = await send_superdapp_message(
-        conversation_id=conversation_id,
-        message=response_text,
-        routing_context=routing_context,
-    )
+    routing_context = payload if isinstance(payload, dict) else {}
+    delivered = False
+    if Config.SUPERDAPP_ASYNC_DELIVERY_ENABLED:
+        delivered = await send_superdapp_message(
+            conversation_id=conversation_id,
+            message=response_text,
+            routing_context=routing_context,
+        )
+    elif Config.SUPERDAPP_DEBUG_WEBHOOK:
+        logger.info("Superdapp async delivery disabled; using sync webhook response only")
 
     # Superdapp compact sync response format.
     compact_body = quote(json.dumps({"body": response_text}, ensure_ascii=False), safe="")
+
+    chat_id = routing_context.get("chatId") or conversation_id
+    room_id = routing_context.get("roomId")
+    room_participant_id = routing_context.get("roomParticipantId")
+    member_id = routing_context.get("memberId")
+    sender_id = routing_context.get("senderId")
+    user_id = routing_context.get("userId")
 
     # Return multiple field aliases because some providers read the sync response body.
     # This keeps compatibility even if async delivery endpoint differs.
@@ -507,6 +518,12 @@ async def superdapp_webhook(request: Request) -> dict[str, Any]:
         "body": response_text,
         "m": compact_body,
         "t": "chat",
+        "chatId": chat_id,
+        "roomId": room_id,
+        "roomParticipantId": room_participant_id,
+        "memberId": member_id,
+        "senderId": sender_id,
+        "userId": user_id,
         "delivered": delivered,
         "data": {
             "conversation_id": conversation_id,
@@ -518,6 +535,12 @@ async def superdapp_webhook(request: Request) -> dict[str, Any]:
             "body": response_text,
             "m": compact_body,
             "t": "chat",
+            "chatId": chat_id,
+            "roomId": room_id,
+            "roomParticipantId": room_participant_id,
+            "memberId": member_id,
+            "senderId": sender_id,
+            "userId": user_id,
             "delivered": delivered,
         },
     }

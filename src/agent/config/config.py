@@ -24,13 +24,16 @@ class Config:
 
     # Superdapp settings
     SUPERDAPP_API_KEY: Optional[str] = os.getenv("SUPERDAPP_API_KEY")
-    SUPERDAPP_API_URL: str = os.getenv("SUPERDAPP_API_URL", "https://api.superdapp.com")
+    SUPERDAPP_API_URL: str = os.getenv("SUPERDAPP_API_URL", "https://api.superdapp.ai")
     SUPERDAPP_WEBHOOK_SECRET: Optional[str] = os.getenv("SUPERDAPP_WEBHOOK_SECRET")
     # Railway asigna PORT automáticamente, usar ese si existe
     SUPERDAPP_WEBHOOK_PORT: int = int(os.getenv("PORT", "8080"))
     SUPERDAPP_WEBHOOK_PATH: str = os.getenv("SUPERDAPP_WEBHOOK_PATH", "/superdapp/webhook")
     SUPERDAPP_SEND_ENDPOINT: str = os.getenv("SUPERDAPP_SEND_ENDPOINT", "/messages")
     SUPERDAPP_DEBUG_WEBHOOK: bool = os.getenv("SUPERDAPP_DEBUG_WEBHOOK", "false").lower() == "true"
+    SUPERDAPP_ASYNC_DELIVERY_ENABLED: bool = os.getenv(
+        "SUPERDAPP_ASYNC_DELIVERY_ENABLED", "false"
+    ).lower() == "true"
 
     # LangSmith tracing
     LANGSMITH_TRACING: bool = os.getenv("LANGSMITH_TRACING", "false").lower() == "true"
