@@ -44,18 +44,80 @@ app = FastAPI(title="Nodaris Superdapp Interface", version="1.0.0")
 _graph = get_graph_with_memory()
 
 
+def _norm_key(key: str) -> str:
+    """Normalize keys to compare snake_case, kebab-case and camelCase equally."""
+    return re.sub(r"[^a-z0-9]", "", key.lower())
+
+
+def _find_nested_value(payload: Any, wanted_keys: set[str]) -> Any:
+    """Depth-first search for first value whose key matches wanted keys."""
+    stack: list[Any] = [payload]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, dict):
+            # Prefer direct key matches in this level.
+            for k, v in current.items():
+                if _norm_key(str(k)) in wanted_keys and v not in (None, ""):
+                    return v
+            # Keep searching nested structures.
+            for v in current.values():
+                if isinstance(v, (dict, list, tuple)):
+                    stack.append(v)
+        elif isinstance(current, (list, tuple)):
+            for item in current:
+                if isinstance(item, (dict, list, tuple)):
+                    stack.append(item)
+    return None
+
+
+def _stringify_message_candidate(candidate: Any) -> str:
+    """Convert common payload message shapes into plain text."""
+    if isinstance(candidate, str):
+        return candidate.strip()
+    if isinstance(candidate, (int, float)):
+        return str(candidate)
+    if isinstance(candidate, dict):
+        for key in ("text", "message", "content", "body", "prompt", "input", "query"):
+            value = candidate.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        nested = _find_nested_value(candidate, {
+            "text",
+            "message",
+            "content",
+            "messagetext",
+            "userinput",
+            "prompt",
+            "input",
+            "query",
+        })
+        if isinstance(nested, str) and nested.strip():
+            return nested.strip()
+    return ""
+
+
 def _extract_conversation_id(payload: dict[str, Any]) -> str:
     """Extract conversation/session id from common webhook payload shapes."""
     possible_paths = [
         ("conversation_id",),
+        ("conversationId",),
         ("chat_id",),
+        ("chatId",),
         ("session_id",),
+        ("sessionId",),
         ("user_id",),
+        ("userId",),
+        ("thread_id",),
+        ("threadId",),
         ("conversation", "id"),
         ("chat", "id"),
         ("session", "id"),
+        ("data", "conversation_id"),
+        ("data", "conversationId"),
+        ("event", "conversationId"),
         ("event", "conversation_id"),
         ("event", "chat_id"),
+        ("event", "chatId"),
     ]
 
     for path in possible_paths:
@@ -69,6 +131,16 @@ def _extract_conversation_id(payload: dict[str, Any]) -> str:
                 break
         if found and cursor:
             return str(cursor)
+
+    nested = _find_nested_value(payload, {
+        "conversationid",
+        "chatid",
+        "sessionid",
+        "userid",
+        "threadid",
+    })
+    if nested not in (None, ""):
+        return str(nested)
 
     return f"superdapp_{uuid.uuid4().hex[:12]}"
 
@@ -108,8 +180,24 @@ def _extract_message_text(payload: dict[str, Any]) -> str:
             else:
                 found = False
                 break
-        if found and isinstance(cursor, str) and cursor.strip():
-            return cursor.strip()
+        if found:
+            text = _stringify_message_candidate(cursor)
+            if text:
+                return text
+
+    nested = _find_nested_value(payload, {
+        "message",
+        "messagetext",
+        "text",
+        "content",
+        "userinput",
+        "prompt",
+        "input",
+        "query",
+    })
+    nested_text = _stringify_message_candidate(nested)
+    if nested_text:
+        return nested_text
 
     return ""
 
@@ -174,7 +262,10 @@ async def send_superdapp_message(conversation_id: str, message: str) -> bool:
     url = f"{api_url.rstrip('/')}/{endpoint.lstrip('/')}"
     payload = {
         "conversation_id": conversation_id,
+        "conversationId": conversation_id,
         "message": message,
+        "text": message,
+        "response": message,
     }
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -237,12 +328,21 @@ async def superdapp_webhook(request: Request) -> dict[str, Any]:
 
     delivered = await send_superdapp_message(conversation_id=conversation_id, message=response_text)
 
-    return {
+    # Return multiple field aliases because some providers read the sync response body.
+    # This keeps compatibility even if async delivery endpoint differs.
+    response_payload = {
         "ok": True,
         "conversation_id": conversation_id,
+        "conversationId": conversation_id,
         "response": response_text,
+        "message": response_text,
+        "text": response_text,
         "delivered": delivered,
     }
+    if not delivered:
+        logger.warning("Superdapp async delivery failed, relying on sync response body")
+
+    return response_payload
 
 
 app.add_api_route(
