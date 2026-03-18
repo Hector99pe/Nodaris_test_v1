@@ -20,14 +20,14 @@ start_optional_service() {
 }
 
 if [ "${AUTONOMY_ENABLED:-true}" = "true" ]; then
-    start_optional_service "Scheduler" "python -m agent.scheduler.task_scheduler"
-    start_optional_service "Queue Consumer" "python -m agent.interfaces.queue_consumer"
+    start_optional_service "Scheduler" "python -c 'from agent.scheduler.task_scheduler import run_scheduler_loop; run_scheduler_loop()'"
+    start_optional_service "Queue Consumer" "python -c 'import asyncio; from agent.interfaces.queue_consumer import run_consumer_loop; asyncio.run(run_consumer_loop())'"
 fi
 
-if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+if [ "${TELEGRAM_POLLING_ENABLED:-false}" = "true" ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
     start_optional_service "Telegram Bot" "python -m agent.interfaces.telegram_bot"
 else
-    echo "TELEGRAM_BOT_TOKEN no configurado; Telegram deshabilitado"
+    echo "Telegram polling deshabilitado (define TELEGRAM_POLLING_ENABLED=true para activarlo)"
 fi
 
 if [ -z "${SUPERDAPP_API_KEY:-}" ]; then
