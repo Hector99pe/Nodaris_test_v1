@@ -22,8 +22,8 @@ RUN pip install --upgrade pip && \
 # Crear directorios necesarios para la auditoría
 RUN mkdir -p data/inbox data/processed data/review data/failed
 
-# Exponer puertos
-EXPOSE 8443
+# Exponer puerto que Railway usa
+EXPOSE 8080
 
 # Ejecutar todos los servicios
 ENTRYPOINT ["./entrypoint.sh"]

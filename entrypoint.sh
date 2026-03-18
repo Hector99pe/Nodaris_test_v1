@@ -62,7 +62,8 @@ if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
     echo "   - Telegram Bot: escuchando comandos"
 fi
 if [ -n "$SUPERDAPP_API_KEY" ]; then
-    echo "   - Superdapp Webhook: http://0.0.0.0:8443/superdapp/webhook"
+    port=${PORT:-8080}
+    echo "   - Superdapp Webhook: http://0.0.0.0:$port/superdapp/webhook"
 fi
 
 # Mantener el contenedor vivo

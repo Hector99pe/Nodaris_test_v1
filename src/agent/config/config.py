@@ -26,7 +26,8 @@ class Config:
     SUPERDAPP_API_KEY: Optional[str] = os.getenv("SUPERDAPP_API_KEY")
     SUPERDAPP_API_URL: str = os.getenv("SUPERDAPP_API_URL", "https://api.superdapp.com")
     SUPERDAPP_WEBHOOK_SECRET: Optional[str] = os.getenv("SUPERDAPP_WEBHOOK_SECRET")
-    SUPERDAPP_WEBHOOK_PORT: int = int(os.getenv("PORT", os.getenv("SUPERDAPP_WEBHOOK_PORT", "8443")))
+    # Railway asigna PORT automáticamente, usar ese si existe
+    SUPERDAPP_WEBHOOK_PORT: int = int(os.getenv("PORT", "8080"))
     SUPERDAPP_WEBHOOK_PATH: str = os.getenv("SUPERDAPP_WEBHOOK_PATH", "/superdapp/webhook")
     SUPERDAPP_SEND_ENDPOINT: str = os.getenv("SUPERDAPP_SEND_ENDPOINT", "/messages")
 
