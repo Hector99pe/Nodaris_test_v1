@@ -520,17 +520,16 @@ async def superdapp_webhook(request: Request) -> dict[str, Any]:
         response_payload = {
             "m": compact_body,
             "t": sync_t,
-            "body": response_text,
             "isSilent": False,
             "body": response_text,
             "message": response_text,
             "text": response_text,
             "response": response_text,
+            "data": {
                 "body": json.dumps(compact_message, ensure_ascii=False),
                 "isSilent": False,
                 "m": compact_body,
                 "t": sync_t,
-                "body": response_text,
                 "message": response_text,
                 "text": response_text,
                 "response": response_text,
