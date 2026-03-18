@@ -77,7 +77,24 @@ def _stringify_message_candidate(candidate: Any) -> str:
     if isinstance(candidate, (int, float)):
         return str(candidate)
     if isinstance(candidate, dict):
-        for key in ("text", "message", "content", "body", "prompt", "input", "query"):
+        for key in (
+            "text",
+            "message",
+            "content",
+            "body",
+            "prompt",
+            "input",
+            "query",
+            "searchTerm",
+            "search_term",
+            "plainText",
+            "plain_text",
+            "value",
+            "raw",
+            "markdown",
+            "caption",
+            "title",
+        ):
             value = candidate.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
@@ -90,6 +107,13 @@ def _stringify_message_candidate(candidate: Any) -> str:
             "prompt",
             "input",
             "query",
+            "searchterm",
+            "plaintext",
+            "value",
+            "raw",
+            "markdown",
+            "caption",
+            "title",
         })
         if isinstance(nested, str) and nested.strip():
             return nested.strip()
@@ -151,9 +175,18 @@ def _extract_message_text(payload: dict[str, Any]) -> str:
         ("message",),
         ("text",),
         ("content",),
+        ("body",),
+        ("searchTerm",),
+        ("search_term",),
         ("prompt",),
         ("input",),
         ("query",),
+        ("body", "content"),
+        ("body", "plainText"),
+        ("body", "plain_text"),
+        ("body", "value"),
+        ("body", "raw"),
+        ("body", "markdown"),
         ("body", "message"),
         ("body", "text"),
         ("data", "content"),
@@ -194,6 +227,13 @@ def _extract_message_text(payload: dict[str, Any]) -> str:
         "prompt",
         "input",
         "query",
+        "searchterm",
+        "plaintext",
+        "value",
+        "raw",
+        "markdown",
+        "caption",
+        "title",
     })
     nested_text = _stringify_message_candidate(nested)
     if nested_text:
@@ -309,10 +349,14 @@ async def superdapp_webhook(request: Request) -> dict[str, Any]:
     user_message = _extract_message_text(payload)
 
     if Config.SUPERDAPP_DEBUG_WEBHOOK:
+        msg_type = payload.get("type") if isinstance(payload, dict) else None
+        preview = (user_message[:120] + "...") if len(user_message) > 120 else user_message
         logger.info(
-            "Superdapp parsed conversation_id=%s message_present=%s",
+            "Superdapp parsed conversation_id=%s message_present=%s type=%s preview=%r",
             conversation_id,
             bool(user_message),
+            msg_type,
+            preview,
         )
 
     if not user_message:
