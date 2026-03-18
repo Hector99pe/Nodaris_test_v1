@@ -30,6 +30,7 @@ class Config:
     SUPERDAPP_WEBHOOK_PORT: int = int(os.getenv("PORT", "8080"))
     SUPERDAPP_WEBHOOK_PATH: str = os.getenv("SUPERDAPP_WEBHOOK_PATH", "/superdapp/webhook")
     SUPERDAPP_SEND_ENDPOINT: str = os.getenv("SUPERDAPP_SEND_ENDPOINT", "/messages")
+    SUPERDAPP_DEBUG_WEBHOOK: bool = os.getenv("SUPERDAPP_DEBUG_WEBHOOK", "false").lower() == "true"
 
     # LangSmith tracing
     LANGSMITH_TRACING: bool = os.getenv("LANGSMITH_TRACING", "false").lower() == "true"

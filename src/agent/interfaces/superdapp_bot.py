@@ -299,10 +299,21 @@ async def superdapp_webhook(request: Request) -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
 
+    if Config.SUPERDAPP_DEBUG_WEBHOOK:
+        payload_keys = sorted(payload.keys()) if isinstance(payload, dict) else []
+        logger.info("Superdapp inbound payload keys=%s", payload_keys)
+
     _check_webhook_secret(request, payload)
 
     conversation_id = _extract_conversation_id(payload)
     user_message = _extract_message_text(payload)
+
+    if Config.SUPERDAPP_DEBUG_WEBHOOK:
+        logger.info(
+            "Superdapp parsed conversation_id=%s message_present=%s",
+            conversation_id,
+            bool(user_message),
+        )
 
     if not user_message:
         # Some providers send non-message webhook events (status, delivery, ping).
@@ -313,9 +324,15 @@ async def superdapp_webhook(request: Request) -> dict[str, Any]:
         )
         return {
             "ok": True,
+            "status": "ok",
             "conversation_id": conversation_id,
+            "conversationId": conversation_id,
             "ignored": True,
             "reason": "no_message_text",
+            "data": {
+                "ignored": True,
+                "reason": "no_message_text",
+            },
         }
 
     try:
@@ -332,15 +349,28 @@ async def superdapp_webhook(request: Request) -> dict[str, Any]:
     # This keeps compatibility even if async delivery endpoint differs.
     response_payload = {
         "ok": True,
+        "status": "ok",
         "conversation_id": conversation_id,
         "conversationId": conversation_id,
         "response": response_text,
         "message": response_text,
         "text": response_text,
+        "reply": response_text,
         "delivered": delivered,
+        "data": {
+            "conversation_id": conversation_id,
+            "conversationId": conversation_id,
+            "message": response_text,
+            "text": response_text,
+            "response": response_text,
+            "reply": response_text,
+            "delivered": delivered,
+        },
     }
     if not delivered:
         logger.warning("Superdapp async delivery failed, relying on sync response body")
+    elif Config.SUPERDAPP_DEBUG_WEBHOOK:
+        logger.info("Superdapp async delivery succeeded for conversation_id=%s", conversation_id)
 
     return response_payload
 
