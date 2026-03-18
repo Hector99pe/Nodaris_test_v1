@@ -8,11 +8,13 @@ This integration supports two usage modes:
 from __future__ import annotations
 
 import logging
+import json
 import re
 import sys
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, unquote_plus
 
 import httpx
 import uvicorn
@@ -73,7 +75,42 @@ def _find_nested_value(payload: Any, wanted_keys: set[str]) -> Any:
 def _stringify_message_candidate(candidate: Any) -> str:
     """Convert common payload message shapes into plain text."""
     if isinstance(candidate, str):
-        return candidate.strip()
+        text = candidate.strip()
+
+        # Superdapp may send a compact envelope as JSON string:
+        # {"m":"%7B%22body%22%3A%22Hola%22%7D","t":"chat"}
+        try:
+            raw_obj = json.loads(text)
+            if isinstance(raw_obj, dict):
+                packed = raw_obj.get("m")
+                if isinstance(packed, str) and packed.strip():
+                    decoded = unquote_plus(packed)
+                    try:
+                        inner = json.loads(decoded)
+                        if isinstance(inner, dict):
+                            inner_text = _stringify_message_candidate(inner)
+                            if inner_text:
+                                return inner_text
+                    except Exception:
+                        if decoded.strip():
+                            return decoded.strip()
+        except Exception:
+            pass
+
+        # If body itself is URL-encoded JSON/string, decode it.
+        if "%" in text:
+            decoded = unquote_plus(text)
+            if decoded and decoded != text:
+                try:
+                    decoded_obj = json.loads(decoded)
+                    decoded_text = _stringify_message_candidate(decoded_obj)
+                    if decoded_text:
+                        return decoded_text
+                except Exception:
+                    if decoded.strip():
+                        return decoded.strip()
+
+        return text
     if isinstance(candidate, (int, float)):
         return str(candidate)
     if isinstance(candidate, dict):
@@ -389,6 +426,9 @@ async def superdapp_webhook(request: Request) -> dict[str, Any]:
 
     delivered = await send_superdapp_message(conversation_id=conversation_id, message=response_text)
 
+    # Superdapp compact sync response format.
+    compact_body = quote(json.dumps({"body": response_text}, ensure_ascii=False), safe="")
+
     # Return multiple field aliases because some providers read the sync response body.
     # This keeps compatibility even if async delivery endpoint differs.
     response_payload = {
@@ -400,6 +440,9 @@ async def superdapp_webhook(request: Request) -> dict[str, Any]:
         "message": response_text,
         "text": response_text,
         "reply": response_text,
+        "body": response_text,
+        "m": compact_body,
+        "t": "chat",
         "delivered": delivered,
         "data": {
             "conversation_id": conversation_id,
@@ -408,6 +451,9 @@ async def superdapp_webhook(request: Request) -> dict[str, Any]:
             "text": response_text,
             "response": response_text,
             "reply": response_text,
+            "body": response_text,
+            "m": compact_body,
+            "t": "chat",
             "delivered": delivered,
         },
     }
