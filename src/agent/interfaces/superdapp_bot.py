@@ -504,50 +504,32 @@ async def superdapp_webhook(request: Request) -> dict[str, Any]:
     sender_id = routing_context.get("senderId")
     user_id = routing_context.get("userId")
 
-    # Return multiple field aliases because some providers read the sync response body.
-    # This keeps compatibility even if async delivery endpoint differs.
-    response_payload = {
-        "ok": True,
-        "status": "ok",
-        "conversation_id": conversation_id,
-        "conversationId": conversation_id,
-        "response": response_text,
-        "message": response_text,
-        "text": response_text,
-        "reply": response_text,
-        "body": response_text,
+    # SDK-like compact response expected by Superdapp webhook consumers.
+    response_payload: dict[str, Any] = {
         "m": compact_body,
         "t": "chat",
-        "chatId": chat_id,
-        "roomId": room_id,
-        "roomParticipantId": room_participant_id,
-        "memberId": member_id,
-        "senderId": sender_id,
-        "userId": user_id,
-        "delivered": delivered,
-        "data": {
-            "conversation_id": conversation_id,
-            "conversationId": conversation_id,
-            "message": response_text,
-            "text": response_text,
-            "response": response_text,
-            "reply": response_text,
-            "body": response_text,
-            "m": compact_body,
-            "t": "chat",
-            "chatId": chat_id,
-            "roomId": room_id,
-            "roomParticipantId": room_participant_id,
-            "memberId": member_id,
-            "senderId": sender_id,
-            "userId": user_id,
-            "delivered": delivered,
-        },
     }
-    if not delivered:
-        logger.warning("Superdapp async delivery failed, relying on sync response body")
-    elif Config.SUPERDAPP_DEBUG_WEBHOOK:
-        logger.info("Superdapp async delivery succeeded for conversation_id=%s", conversation_id)
+    if chat_id:
+        response_payload["chatId"] = chat_id
+    if room_id:
+        response_payload["roomId"] = room_id
+    if room_participant_id:
+        response_payload["roomParticipantId"] = room_participant_id
+    if member_id:
+        response_payload["memberId"] = member_id
+    if sender_id:
+        response_payload["senderId"] = sender_id
+    if user_id:
+        response_payload["userId"] = user_id
+
+    if Config.SUPERDAPP_ASYNC_DELIVERY_ENABLED:
+        if not delivered:
+            logger.warning("Superdapp async delivery failed, relying on sync response body")
+        elif Config.SUPERDAPP_DEBUG_WEBHOOK:
+            logger.info("Superdapp async delivery succeeded for conversation_id=%s", conversation_id)
+
+    if Config.SUPERDAPP_DEBUG_WEBHOOK:
+        logger.info("Superdapp sync response payload keys=%s", sorted(response_payload.keys()))
 
     return response_payload
 
