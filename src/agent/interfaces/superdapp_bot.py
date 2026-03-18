@@ -384,7 +384,6 @@ async def send_superdapp_message(
         "message": {
             "body": message,
         },
-        "isSilent": False,
     }
     if routing_context:
         for key in (
