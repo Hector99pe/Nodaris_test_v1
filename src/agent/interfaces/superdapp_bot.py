@@ -409,9 +409,11 @@ async def send_superdapp_message(
         logger.warning("Superdapp API not configured (SUPERDAPP_API_URL/SUPERDAPP_API_KEY)")
         return False
 
+    compact_body = quote(json.dumps({"body": message}, ensure_ascii=False), safe="")
+    formatted_body = json.dumps({"m": compact_body, "t": "chat"}, ensure_ascii=False)
     payload: dict[str, Any] = {
         "message": {
-            "body": message,
+            "body": formatted_body,
         },
     }
 
