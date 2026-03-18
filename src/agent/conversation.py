@@ -6,10 +6,11 @@ leveraging the agent_reasoner for tool selection and response generation.
 
 from __future__ import annotations
 
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List
+
+from langchain_core.messages import AIMessage, HumanMessage
 from langsmith import traceable
 
-from langchain_core.messages import HumanMessage, AIMessage
 from agent.graph.graph import get_graph_with_memory
 from agent.resilience import CircuitBreakerOpenError, format_llm_circuit_breaker_message
 
@@ -20,9 +21,9 @@ _graph = get_graph_with_memory()
 @traceable(name="conversationalAgent")
 async def process_conversation(
     message: str,
-    history: Optional[List[Dict[str, Any]]] = None,
+    history: List[Dict[str, Any]] | None = None,
     thread_id: str = "default",
-    extra_state: Optional[Dict[str, Any]] = None,
+    extra_state: Dict[str, Any] | None = None,
 ) -> str:
     """Process conversational message through the audit graph.
 

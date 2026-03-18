@@ -4,9 +4,8 @@ Analyzes available data and creates a context-aware plan
 that guides the agent_reasoner's tool selection.
 """
 
-import json
 import logging
-from typing import Dict, Any
+from typing import Any, Dict
 
 from langchain_core.messages import HumanMessage
 from langsmith import traceable
@@ -63,6 +62,7 @@ def _generate_llm_plan(context: dict, mode: str, memory_hint: str, reflection_no
     try:
         from langchain_openai import ChatOpenAI
         from pydantic import SecretStr
+
         from agent.resilience import call_with_llm_circuit_breaker
 
         llm = ChatOpenAI(

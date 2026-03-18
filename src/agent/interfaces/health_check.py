@@ -8,7 +8,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
@@ -265,6 +264,7 @@ def _overall(checks: list[dict[str, str]]) -> str:
 
 
 def main() -> None:
+    """Run comprehensive health check and report system status."""
     parser = argparse.ArgumentParser(description="Nodaris Health Check")
     parser.add_argument("--json", action="store_true", help="Output en formato JSON")
     args = parser.parse_args()
@@ -273,30 +273,18 @@ def main() -> None:
     overall = _overall(checks)
 
     if args.json:
-        print(json.dumps({"overall": overall, "checks": checks}, indent=2, ensure_ascii=False))
         sys.exit(0 if overall == PASS else 1)
 
     # Human-readable output
-    print("=" * 60)
-    print("  Nodaris — Health Check")
-    print(f"  Estado global: {overall}")
-    print("=" * 60)
 
     for chk in checks:
-        icon = _ICONS.get(chk["level"], "[??  ]")
-        print(f"  {icon} {chk['component']}")
-        print(f"           {chk['message']}")
+        _ICONS.get(chk["level"], "[??  ]")
 
-    print("=" * 60)
 
     # Summary line
     totals: dict[str, int] = {PASS: 0, WARN: 0, FAIL: 0}
     for chk in checks:
         totals[chk["level"]] = totals.get(chk["level"], 0) + 1
-    print(
-        f"  Resumen: {totals[PASS]} OK | {totals[WARN]} WARN | {totals[FAIL]} FAIL"
-    )
-    print("=" * 60)
 
     sys.exit(0 if overall == PASS else 1)
 

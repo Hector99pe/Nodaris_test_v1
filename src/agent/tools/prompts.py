@@ -1,7 +1,8 @@
 """Prompt templates for LLM interactions."""
 
 from pathlib import Path
-from typing import List, Dict
+from typing import Dict, List
+
 from langsmith import traceable
 
 _SOUL_PATH = Path(__file__).resolve().parents[3] / "SOUL.md"

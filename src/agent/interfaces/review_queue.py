@@ -11,26 +11,20 @@ def _cmd_list(limit: int) -> None:
     store = AuditStore()
     jobs = store.list_review_jobs(limit=limit)
     if not jobs:
-        print("No hay jobs en review_required.")
         return
 
     for item in jobs:
-        print(
-            f"- #{item['id']} risk={item['risk_label']} priority={item['priority_score']:.2f} "
-            f"attempts={item['attempt_count']}/{item['max_attempts']}"
-        )
-        print(f"  src: {item['source_ref']}")
         if item.get("reason"):
-            print(f"  reason: {item['reason']}")
+            pass
 
 
 def _cmd_decide(job_id: int, decision: str, note: str) -> None:
     store = AuditStore()
     store.review_decide(job_id=job_id, decision=decision, note=note)
-    print(f"Job #{job_id} -> {decision}")
 
 
 def main() -> None:
+    """Manage review queue (list, decide, resolve jobs)."""
     parser = argparse.ArgumentParser(description="Manage Nodaris review queue")
     sub = parser.add_subparsers(dest="command", required=True)
 

@@ -380,11 +380,9 @@ async def _run_one_batch() -> tuple[int, dict[str, int]]:
 async def run_consumer_loop() -> None:
     """Continuously process pending jobs from SQLite queue."""
     if not Config.AUTONOMY_ENABLED:
-        print("Autonomia deshabilitada (AUTONOMY_ENABLED=false)")
         return
 
     idle_sleep = 3
-    print("Queue consumer autonomo activo")
 
     while True:
         processed, counts = await _run_one_batch()

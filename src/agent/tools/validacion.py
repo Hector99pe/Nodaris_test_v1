@@ -1,11 +1,10 @@
 """Tool for calculating exam statistics."""
 
 import json
-from typing import Any, Annotated
+from typing import Annotated
 
 from langchain_core.tools import tool as langgraph_tool
 from langgraph.prebuilt import InjectedState
-
 
 # === LangGraph Tool Wrappers ===
 

@@ -10,7 +10,6 @@ from typing import Any, Dict, List
 
 from agent.config import Config
 
-
 _UPDATE_JOB_STATE_SQL = """
 UPDATE audit_jobs
 SET status = ?, completed_at = ?, error_message = ?
@@ -28,6 +27,7 @@ class AuditStore:
     """Persists completed audit runs and extracted findings."""
 
     def __init__(self, db_path: str | None = None) -> None:
+        """Initialize audit store with optional custom database path."""
         base_path = Path(db_path or Config.AUDIT_DB_PATH)
         self.db_path = base_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -164,6 +164,7 @@ class AuditStore:
             return int(row_id)
 
     def get_dead_letter_count(self) -> int:
+        """Return total count of dead-letter jobs."""
         with self._connect() as conn:
             row = conn.execute("SELECT COUNT(*) AS total FROM dead_letter_jobs").fetchone()
         return int(row["total"]) if row else 0

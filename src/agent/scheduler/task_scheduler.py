@@ -57,15 +57,12 @@ def _build_discovery_message(discovered: list) -> str:
 def run_scheduler_loop() -> None:
     """Run discovery periodically to enqueue new jobs."""
     if not Config.AUTONOMY_ENABLED:
-        print("Autonomia deshabilitada (AUTONOMY_ENABLED=false)")
         return
 
     interval = max(30, int(Config.AUTONOMY_SCHEDULER_INTERVAL_SEC))
-    print(f"Scheduler autonomo activo cada {interval}s. Inbox: {Config.AUTONOMY_INBOX_PATH}")
 
     while True:
         result = discovery_node({})
-        print(result.get("mensaje", "Discovery ejecutado"))
 
         discovered = result.get("discovered_jobs") or []
         if discovered:

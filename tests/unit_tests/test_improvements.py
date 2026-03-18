@@ -1,9 +1,6 @@
 """Tests for the 9 improvements: auto-recovery, guardrails, cache, etc."""
 
-import json
-from unittest.mock import patch, MagicMock
 
-import pytest
 
 
 # ============================================================================

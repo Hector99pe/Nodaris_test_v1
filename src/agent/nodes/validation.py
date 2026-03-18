@@ -3,7 +3,8 @@
 import json as _json_mod
 import logging
 import re as _re
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List
+
 from langsmith import traceable
 
 from agent.config import Config
@@ -24,7 +25,6 @@ def _try_parse_file(file_path: str):
     or recognizable academic data structure.
     Returns None for unsupported formats or unrecognized schemas.
     """
-    import json as _json
     from pathlib import Path as _Path
 
     path = _Path(file_path)
@@ -46,7 +46,7 @@ def _try_parse_json(path):
     import json as _json
 
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = _json.load(f)
     except (ValueError, OSError):
         return None
@@ -67,7 +67,7 @@ def _try_parse_csv(path):
 
     for encoding in ("utf-8", "utf-8-sig", "latin-1"):
         try:
-            with open(path, "r", encoding=encoding, newline="") as f:
+            with open(path, encoding=encoding, newline="") as f:
                 sniffer = _csv.Sniffer()
                 sample = f.read(4096)
                 try:
@@ -92,7 +92,7 @@ def _try_parse_csv(path):
 
 # ── Column mapping: LLM-first, regex fallback ──────────────────────
 
-def _llm_map_columns(headers: List[str], sample_row: list) -> Optional[Dict[int, str]]:
+def _llm_map_columns(headers: List[str], sample_row: list) -> Dict[int, str] | None:
     """Ask the LLM to semantically map each column header to a data role.
 
     Returns a dict  {column_index: role}  or None when the LLM is unavailable.
@@ -103,6 +103,7 @@ def _llm_map_columns(headers: List[str], sample_row: list) -> Optional[Dict[int,
     try:
         from langchain_openai import ChatOpenAI
         from pydantic import SecretStr
+
         from agent.resilience import call_with_llm_circuit_breaker
 
         llm = ChatOpenAI(

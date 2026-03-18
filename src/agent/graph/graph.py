@@ -22,12 +22,13 @@ from __future__ import annotations
 
 import json as _json
 import logging
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Any, cast
 
-from langchain_core.messages import HumanMessage as _HumanMessage, ToolMessage as _ToolMessage
-from langgraph.graph import StateGraph, END, START
+from langchain_core.messages import HumanMessage as _HumanMessage
+from langchain_core.messages import ToolMessage as _ToolMessage
+from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 logger = logging.getLogger("nodaris.graph")
@@ -37,7 +38,7 @@ logger = logging.getLogger("nodaris.graph")
 # Tool Result Cache
 # ============================================================================
 
-import hashlib as _hashlib
+import hashlib as _hashlib  # noqa: E402
 
 _tool_cache: dict[str, str] = {}  # hash(tool_name + args) → result content
 _CACHE_MAX_SIZE = 50
@@ -55,30 +56,30 @@ def _cache_key(tool_name: str, args_str: str) -> str:
 
 try:
     from agent.config import Config
-    from agent.state import AcademicAuditState
     from agent.nodes import (
-        planner_node,
-        validate_academic_data,
         generate_verification,
+        planner_node,
         reflection_node,
         report_node,
+        validate_academic_data,
     )
     from agent.nodes.agent_reasoner import agent_reasoner
+    from agent.state import AcademicAuditState
     from agent.tools import AUDIT_TOOLS
 except ModuleNotFoundError:
     current_dir = Path(__file__).resolve().parent
     if str(current_dir) not in sys.path:
         sys.path.insert(0, str(current_dir))
     from config import Config
-    from state import AcademicAuditState
     from nodes import (
-        planner_node,
-        validate_academic_data,
         generate_verification,
+        planner_node,
         reflection_node,
         report_node,
+        validate_academic_data,
     )
     from nodes.agent_reasoner import agent_reasoner
+    from state import AcademicAuditState
     from tools import AUDIT_TOOLS
 
 

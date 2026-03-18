@@ -80,6 +80,81 @@ Mediante interfaz LangGraph Studio o Telegram bot:
 
 Los archivos procesados se mueven a `data/processed/`, `data/review/` o `data/failed/`.
 
+## Integración Superdapp
+
+Nodaris soporta integración con Superdapp en dos vías:
+
+- Entrada por webhook (eventos/mensajes entrantes)
+- Salida por API REST (respuesta del asistente de vuelta a Superdapp)
+
+Variables principales:
+
+```text
+SUPERDAPP_API_KEY=...
+SUPERDAPP_API_URL=https://api.superdapp.com
+SUPERDAPP_WEBHOOK_SECRET=... # usa un valor aleatorio fuerte
+SUPERDAPP_WEBHOOK_PORT=8443
+SUPERDAPP_WEBHOOK_PATH=/superdapp/webhook
+SUPERDAPP_SEND_ENDPOINT=/messages
+```
+
+Levantar webhook local:
+
+```bash
+python -m agent.interfaces.superdapp_bot
+```
+
+Endpoints:
+
+- Health: `GET /health`
+- Webhook: `POST /superdapp/webhook` (o el path definido en `SUPERDAPP_WEBHOOK_PATH`)
+
+Payload mínimo esperado:
+
+```json
+{
+  "conversation_id": "conv_001",
+  "message": "Hola Nodaris"
+}
+```
+
+Registro en Superdapp:
+
+- Webhook URL: `https://TU_DOMINIO_PUBLICO/superdapp/webhook`
+- Método: `POST`
+- Secreto: mismo valor que `SUPERDAPP_WEBHOOK_SECRET`
+
+## Deploy en Railway
+
+Configuración recomendada para desplegar solo la interfaz Superdapp:
+
+1. Crea un servicio en Railway conectado a este repositorio.
+2. Define Start Command:
+
+   ```bash
+   python -m agent.interfaces.superdapp_bot
+   ```
+
+3. Configura variables en Railway (Environment):
+   - `OPENAI_API_KEY`
+   - `OPENAI_MODEL`
+   - `SUPERDAPP_API_KEY`
+   - `SUPERDAPP_API_URL`
+   - `SUPERDAPP_WEBHOOK_SECRET`
+   - `SUPERDAPP_WEBHOOK_PATH`
+   - `SUPERDAPP_SEND_ENDPOINT`
+4. Railway inyecta `PORT` automáticamente. El servicio ya lo usa por configuración.
+5. Registra en Superdapp la URL pública que entrega Railway:
+
+   ```text
+   https://<tu-servicio>.up.railway.app/superdapp/webhook
+   ```
+
+6. Smoke test post-deploy:
+   - `GET /health` debe responder `ok: true`
+   - `POST /superdapp/webhook` con secreto válido debe responder `200`
+   - `POST /superdapp/webhook` con secreto inválido debe responder `401`
+
 ## Documentación
 
 - [docs/README.md](./docs/README.md) - Índice de documentación

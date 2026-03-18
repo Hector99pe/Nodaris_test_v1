@@ -4,7 +4,6 @@ The brain of the agentic loop. Uses ChatOpenAI with bound tools
 to let the LLM decide which analyses to run and when to stop.
 """
 
-import json
 import logging
 from typing import Any, Dict
 

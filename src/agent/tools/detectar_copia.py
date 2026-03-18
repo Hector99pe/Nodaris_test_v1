@@ -4,8 +4,8 @@ Analyzes answer similarity to identify potential cheating.
 """
 
 import json
-from typing import List, Dict, Any, Annotated
 from difflib import SequenceMatcher
+from typing import Annotated, Any, Dict, List
 
 from langchain_core.tools import tool as langgraph_tool
 from langgraph.prebuilt import InjectedState

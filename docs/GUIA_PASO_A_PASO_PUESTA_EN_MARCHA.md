@@ -210,3 +210,69 @@ python -m agent.interfaces.queue_consumer
 ```
 
 Con esto queda operativo todo el Agente IA Nodaris de punta a punta.
+
+## 15. Integración Superdapp (webhook)
+
+Si vas a usar Superdapp como canal, agrega estas variables en `.env`:
+
+```text
+SUPERDAPP_API_KEY=...
+SUPERDAPP_API_URL=https://api.superdapp.com
+SUPERDAPP_WEBHOOK_SECRET=tu_secreto_fuerte
+SUPERDAPP_WEBHOOK_PORT=8443
+SUPERDAPP_WEBHOOK_PATH=/superdapp/webhook
+SUPERDAPP_SEND_ENDPOINT=/messages
+```
+
+Levanta el servicio webhook:
+
+```powershell
+python -m agent.interfaces.superdapp_bot
+```
+
+Verificación local rápida:
+
+```powershell
+Invoke-RestMethod -Method GET http://localhost:8443/health
+```
+
+Para registrar en Superdapp:
+
+- Webhook URL: `https://TU_DOMINIO_PUBLICO/superdapp/webhook`
+- Método: `POST`
+- Secreto: mismo valor de `SUPERDAPP_WEBHOOK_SECRET`
+
+Payload mínimo recomendado:
+
+```json
+{
+  "conversation_id": "conv_001",
+  "message": "Hola Nodaris"
+}
+```
+
+## 16. Despliegue en Railway
+
+1. Crea un servicio en Railway y conecta este repositorio.
+2. Usa como Start Command:
+
+```text
+python -m agent.interfaces.superdapp_bot
+```
+
+3. Carga variables de entorno (al menos):
+   - `OPENAI_API_KEY`
+   - `OPENAI_MODEL`
+   - `SUPERDAPP_API_KEY`
+   - `SUPERDAPP_API_URL`
+   - `SUPERDAPP_WEBHOOK_SECRET`
+   - `SUPERDAPP_WEBHOOK_PATH`
+   - `SUPERDAPP_SEND_ENDPOINT`
+4. Railway define `PORT` automáticamente. Nodaris lo prioriza sobre `SUPERDAPP_WEBHOOK_PORT`.
+5. Registra el webhook final en Superdapp con la URL pública de Railway.
+
+Smoke test después del deploy:
+
+- `GET https://<tu-servicio>.up.railway.app/health` debe devolver `ok=true`
+- `POST https://<tu-servicio>.up.railway.app/superdapp/webhook` con secreto correcto debe devolver `200`
+- Con secreto incorrecto debe devolver `401`

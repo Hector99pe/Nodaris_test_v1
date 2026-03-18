@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Annotated, List, Dict
-from typing_extensions import TypedDict
+from typing import Annotated, Any, Dict, List
 
 from langgraph.graph.message import add_messages
+from typing_extensions import TypedDict
 
 
 class AcademicAuditState(TypedDict, total=False):

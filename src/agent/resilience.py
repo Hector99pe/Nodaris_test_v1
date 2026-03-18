@@ -13,6 +13,7 @@ class CircuitBreakerOpenError(RuntimeError):
     """Raised when the LLM circuit breaker is open and rejects a request."""
 
     def __init__(self, retry_after_sec: float, message: str | None = None) -> None:
+        """Initialize circuit breaker open exception with retry time."""
         self.retry_after_sec = max(0.0, float(retry_after_sec))
         super().__init__(message or f"Circuit breaker LLM abierto; reintentar en {self.retry_after_sec:.1f}s")
 
@@ -25,12 +26,14 @@ class LlmCircuitBreaker:
         clock: Callable[[], float] | None = None,
         sleeper: Callable[[float], None] | None = None,
     ) -> None:
+        """Initialize circuit breaker with optional clock and sleeper dependencies."""
         self._clock = clock or time.monotonic
         self._sleep = sleeper or time.sleep
         self._lock = threading.Lock()
         self.reset()
 
     def reset(self) -> None:
+        """Reset circuit breaker to closed state and clear failure counters."""
         with self._lock:
             self._state = "closed"
             self._consecutive_failures = 0
@@ -38,6 +41,7 @@ class LlmCircuitBreaker:
             self._last_error = ""
 
     def snapshot(self) -> dict[str, Any]:
+        """Return current circuit breaker state snapshot."""
         with self._lock:
             retry_after = max(0.0, self._opened_until - self._clock()) if self._state == "open" else 0.0
             return {
@@ -48,6 +52,7 @@ class LlmCircuitBreaker:
             }
 
     def call(self, operation: Callable[[], Any]) -> Any:
+        """Execute operation with circuit breaker, retries, and exponential backoff."""
         max_attempts = max(1, int(Config.LLM_CIRCUIT_BREAKER_MAX_RETRIES) + 1)
         last_error: Exception | None = None
 

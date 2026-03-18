@@ -11,22 +11,19 @@ def _cmd_list(limit: int) -> None:
     store = AuditStore()
     items = store.list_dead_letters(limit=limit)
     if not items:
-        print("No hay dead-letters.")
         return
 
     for item in items:
-        print(f"- dl#{item['id']} job#{item['job_id']} at={item['created_at']}")
-        print(f"  src: {item['source_ref']}")
-        print(f"  reason: {item['reason']}")
+        pass
 
 
 def _cmd_requeue(dead_letter_id: int, note: str) -> None:
     store = AuditStore()
-    job_id = store.requeue_dead_letter(dead_letter_id=dead_letter_id, note=note)
-    print(f"Dead-letter #{dead_letter_id} reencolado como job #{job_id}")
+    store.requeue_dead_letter(dead_letter_id=dead_letter_id, note=note)
 
 
 def main() -> None:
+    """Manage dead-letter queue (list, clear, requeue jobs)."""
     parser = argparse.ArgumentParser(description="Manage Nodaris dead-letter queue")
     sub = parser.add_subparsers(dest="command", required=True)
 

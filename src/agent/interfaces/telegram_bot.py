@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import html
 import logging
-import os
 import sys
 import uuid
 from pathlib import Path
@@ -13,7 +12,13 @@ from typing import Final
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.constants import ParseMode
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -32,14 +37,18 @@ src_path = project_root / "src"
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from langchain_core.messages import HumanMessage, AIMessage
-from langgraph.types import Command
+from langchain_core.messages import AIMessage, HumanMessage  # noqa: E402
+from langgraph.types import Command  # noqa: E402
 
-from agent.config import Config
-from agent.graph.graph import get_graph_with_memory, clear_tool_cache
-from agent.conversation import process_conversation
-from agent.resilience import CircuitBreakerOpenError, format_llm_circuit_breaker_message, get_llm_circuit_breaker_snapshot
-from agent.storage.audit_store import AuditStore
+from agent.config import Config  # noqa: E402
+from agent.conversation import process_conversation  # noqa: E402
+from agent.graph.graph import clear_tool_cache, get_graph_with_memory  # noqa: E402
+from agent.resilience import (  # noqa: E402
+    CircuitBreakerOpenError,
+    format_llm_circuit_breaker_message,
+    get_llm_circuit_breaker_snapshot,
+)
+from agent.storage.audit_store import AuditStore  # noqa: E402
 
 # Graph with memory checkpointer for Telegram persistence
 _graph = get_graph_with_memory()
@@ -346,7 +355,7 @@ def _build_student_card(report: dict, student_token: str, findings: dict) -> str
     student_name = _resolve_student_name(student_token, findings) or student_token
 
     lines = [
-        f"👤 <b>Informe Individual</b>",
+        "👤 <b>Informe Individual</b>",
         f"🪪 Alumno: <b>{html.escape(student_name)}</b>",
         f"🔎 Búsqueda: <code>{html.escape(student_token)}</code>",
         f"📘 Examen: <b>{html.escape(str(report.get('exam_id') or '—'))}</b>",
@@ -888,8 +897,6 @@ def run_telegram_bot() -> None:
         )
         raise ValueError(msg)
 
-    print("Iniciando Nodaris Telegram Bot...")
-    print("Conectando...")
 
     app = Application.builder().token(token).build()
 
@@ -912,8 +919,6 @@ def run_telegram_bot() -> None:
 
     app.add_error_handler(error_handler)
 
-    print("Bot activo y escuchando comandos.")
-    print("Presiona Ctrl+C para detener.\n")
 
     app.run_polling(drop_pending_updates=True)
 

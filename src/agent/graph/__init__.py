@@ -1,3 +1,3 @@
 """Graph module for Nodaris agent."""
 
-from .graph import *
+from .graph import *  # noqa: F403

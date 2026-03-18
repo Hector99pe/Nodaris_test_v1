@@ -1,14 +1,13 @@
 """Configuration for Nodaris agent."""
 
 import os
-from typing import Optional
 
 
 class Config:
     """Centralized configuration."""
 
     # OpenAI settings
-    OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
+    OPENAI_API_KEY: str | None = os.getenv("OPENAI_API_KEY")
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     OPENAI_TEMPERATURE: float = float(os.getenv("OPENAI_TEMPERATURE", "0.3"))
 
@@ -20,7 +19,7 @@ class Config:
     ANOMALY_THRESHOLD: float = 0.7
 
     # Telegram settings
-    TELEGRAM_BOT_TOKEN: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN")
+    TELEGRAM_BOT_TOKEN: str | None = os.getenv("TELEGRAM_BOT_TOKEN")
 
     # LangSmith tracing
     LANGSMITH_TRACING: bool = os.getenv("LANGSMITH_TRACING", "false").lower() == "true"
@@ -70,4 +69,4 @@ class Config:
     LEARNING_MEMORY_TOP_TOOLS: int = int(os.getenv("LEARNING_MEMORY_TOP_TOOLS", "3"))
 
     # Admin notifications
-    TELEGRAM_ADMIN_CHAT_ID: Optional[str] = os.getenv("TELEGRAM_ADMIN_CHAT_ID")
+    TELEGRAM_ADMIN_CHAT_ID: str | None = os.getenv("TELEGRAM_ADMIN_CHAT_ID")

@@ -3,7 +3,8 @@
 import hashlib
 import json
 import logging
-from typing import Dict, Any
+from typing import Any, Dict
+
 from langsmith import traceable
 
 from agent.tools.crypto import generate_verification_hash

@@ -6,7 +6,7 @@ structure interpretation and human-in-the-loop clarification.
 
 import json
 from pathlib import Path
-from typing import Dict, Any, List, Annotated
+from typing import Annotated, Any, Dict, List
 
 from langchain_core.tools import tool as langgraph_tool
 from langgraph.prebuilt import InjectedState
@@ -82,7 +82,7 @@ def tool_normalizar_datos_examen(
         if ext == ".csv":
             rows, headers = _read_csv_full(path)
         elif ext == ".json":
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             return json.dumps({"tipo": "normalizacion", "datos": data, "mensaje": "JSON ya está en formato nativo"})
         else:
@@ -152,7 +152,7 @@ def tool_solicitar_clarificacion(
 
 def _parse_json(path: Path) -> str:
     """Parse a JSON file and return its structure."""
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
     # Determine structure
@@ -188,7 +188,7 @@ def _parse_csv(path: Path) -> str:
     # Try common encodings
     for encoding in ("utf-8", "utf-8-sig", "latin-1"):
         try:
-            with open(path, "r", encoding=encoding, newline="") as f:
+            with open(path, encoding=encoding, newline="") as f:
                 sniffer = csv_mod.Sniffer()
                 sample = f.read(4096)
                 try:
@@ -245,7 +245,7 @@ def _read_csv_full(path: Path) -> tuple:
 
     for encoding in ("utf-8", "utf-8-sig", "latin-1"):
         try:
-            with open(path, "r", encoding=encoding, newline="") as f:
+            with open(path, encoding=encoding, newline="") as f:
                 sniffer = csv_mod.Sniffer()
                 sample = f.read(4096)
                 try:

@@ -1,3 +1,3 @@
 """Configuration module for Nodaris agent."""
 
-from .config import Config
+from .config import Config as Config

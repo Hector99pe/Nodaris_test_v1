@@ -6,7 +6,8 @@ Generates professional audit reports with output guardrails.
 import logging
 import unicodedata
 from datetime import datetime
-from typing import Dict, Any
+from typing import Any, Dict
+
 from langsmith import traceable
 
 from agent.storage import AuditStore
@@ -67,6 +68,7 @@ def _evaluate_report_quality(report_text: str, confidence_score: float) -> str |
     try:
         from langchain_openai import ChatOpenAI
         from pydantic import SecretStr
+
         from agent.resilience import call_with_llm_circuit_breaker
 
         llm = ChatOpenAI(

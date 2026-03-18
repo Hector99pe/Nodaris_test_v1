@@ -1,7 +1,6 @@
 from pathlib import Path
 
-from agent.interfaces.queue_consumer import _archive_file
-from agent.interfaces.queue_consumer import _build_completed_summary
+from agent.interfaces.queue_consumer import _archive_file, _build_completed_summary
 
 
 def test_archive_file_moves_to_target(tmp_path: Path) -> None:

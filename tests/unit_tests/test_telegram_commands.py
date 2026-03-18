@@ -44,38 +44,45 @@ class TestCommandHandlersExist:
     """Verify that all command handler functions exist and are importable."""
 
     def test_info_command_exists(self):
-        from agent.interfaces.telegram_bot import info_command
         import asyncio
+
+        from agent.interfaces.telegram_bot import info_command
         assert asyncio.iscoroutinefunction(info_command)
 
     def test_auditorias_command_exists(self):
-        from agent.interfaces.telegram_bot import auditorias_command
         import asyncio
+
+        from agent.interfaces.telegram_bot import auditorias_command
         assert asyncio.iscoroutinefunction(auditorias_command)
 
     def test_stats_command_exists(self):
-        from agent.interfaces.telegram_bot import stats_command
         import asyncio
+
+        from agent.interfaces.telegram_bot import stats_command
         assert asyncio.iscoroutinefunction(stats_command)
 
     def test_estado_command_exists(self):
-        from agent.interfaces.telegram_bot import estado_command
         import asyncio
+
+        from agent.interfaces.telegram_bot import estado_command
         assert asyncio.iscoroutinefunction(estado_command)
 
     def test_revision_command_exists(self):
-        from agent.interfaces.telegram_bot import revision_command
         import asyncio
+
+        from agent.interfaces.telegram_bot import revision_command
         assert asyncio.iscoroutinefunction(revision_command)
 
     def test_reporte_command_exists(self):
-        from agent.interfaces.telegram_bot import reporte_command
         import asyncio
+
+        from agent.interfaces.telegram_bot import reporte_command
         assert asyncio.iscoroutinefunction(reporte_command)
 
     def test_help_command_exists(self):
-        from agent.interfaces.telegram_bot import help_command
         import asyncio
+
+        from agent.interfaces.telegram_bot import help_command
         assert asyncio.iscoroutinefunction(help_command)
 
 

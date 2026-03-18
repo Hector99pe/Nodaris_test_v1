@@ -1,8 +1,8 @@
 """Tool for evaluating exam difficulty."""
 
 import json
-from typing import Any, Annotated
 from enum import Enum
+from typing import Annotated
 
 from langchain_core.tools import tool as langgraph_tool
 from langgraph.prebuilt import InjectedState

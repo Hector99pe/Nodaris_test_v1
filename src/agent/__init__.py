@@ -14,6 +14,7 @@ Components:
 """
 
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Load .env BEFORE importing Config (which reads env vars at import time)
@@ -21,8 +22,8 @@ _project_root = Path(__file__).resolve().parent.parent.parent
 _env_path = _project_root / ".env"
 load_dotenv(_env_path)
 
-from agent.graph import graph
-from agent.state import AcademicAuditState
-from agent.config import Config
+from agent.config import Config  # noqa: E402
+from agent.graph import graph  # noqa: E402
+from agent.state import AcademicAuditState  # noqa: E402
 
 __all__ = ["graph", "AcademicAuditState", "Config"]

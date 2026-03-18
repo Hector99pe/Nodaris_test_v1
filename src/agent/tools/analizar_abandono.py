@@ -4,7 +4,7 @@ Identifies and analyzes students who didn't complete the exam.
 """
 
 import json
-from typing import List, Dict, Any, Annotated
+from typing import Annotated, Any, Dict, List
 
 from langchain_core.tools import tool as langgraph_tool
 from langgraph.prebuilt import InjectedState
