@@ -22,6 +22,14 @@ class Config:
     # Telegram settings
     TELEGRAM_BOT_TOKEN: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN")
 
+    # Superdapp settings
+    SUPERDAPP_API_KEY: Optional[str] = os.getenv("SUPERDAPP_API_KEY")
+    SUPERDAPP_API_URL: str = os.getenv("SUPERDAPP_API_URL", "https://api.superdapp.com")
+    SUPERDAPP_WEBHOOK_SECRET: Optional[str] = os.getenv("SUPERDAPP_WEBHOOK_SECRET")
+    SUPERDAPP_WEBHOOK_PORT: int = int(os.getenv("PORT", os.getenv("SUPERDAPP_WEBHOOK_PORT", "8443")))
+    SUPERDAPP_WEBHOOK_PATH: str = os.getenv("SUPERDAPP_WEBHOOK_PATH", "/superdapp/webhook")
+    SUPERDAPP_SEND_ENDPOINT: str = os.getenv("SUPERDAPP_SEND_ENDPOINT", "/messages")
+
     # LangSmith tracing
     LANGSMITH_TRACING: bool = os.getenv("LANGSMITH_TRACING", "false").lower() == "true"
 
