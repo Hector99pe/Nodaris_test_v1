@@ -78,14 +78,25 @@ def _extract_message_text(payload: dict[str, Any]) -> str:
     possible_paths = [
         ("message",),
         ("text",),
+        ("content",),
         ("prompt",),
         ("input",),
+        ("query",),
+        ("body", "message"),
+        ("body", "text"),
+        ("data", "content"),
+        ("event", "content"),
+        ("event", "query"),
         ("event", "message"),
         ("event", "text"),
         ("data", "message"),
         ("data", "text"),
         ("event", "data", "message"),
         ("event", "data", "text"),
+        ("event", "payload", "message"),
+        ("event", "payload", "text"),
+        ("payload", "message"),
+        ("payload", "text"),
     ]
 
     for path in possible_paths:
@@ -203,7 +214,18 @@ async def superdapp_webhook(request: Request) -> dict[str, Any]:
     user_message = _extract_message_text(payload)
 
     if not user_message:
-        raise HTTPException(status_code=400, detail="No inbound message text found in payload")
+        # Some providers send non-message webhook events (status, delivery, ping).
+        # Acknowledge with 200 to avoid retries and keep integration stable.
+        logger.info(
+            "Superdapp webhook event without message text. keys=%s",
+            sorted(payload.keys()) if isinstance(payload, dict) else type(payload).__name__,
+        )
+        return {
+            "ok": True,
+            "conversation_id": conversation_id,
+            "ignored": True,
+            "reason": "no_message_text",
+        }
 
     try:
         response_text = await _process_user_text(conversation_id=conversation_id, message=user_message)
