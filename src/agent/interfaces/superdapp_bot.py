@@ -504,23 +504,42 @@ async def superdapp_webhook(request: Request) -> dict[str, Any]:
     sender_id = routing_context.get("senderId")
     user_id = routing_context.get("userId")
 
-    # SDK-like compact response expected by Superdapp webhook consumers.
+    # Return both compact and plain variants for compatibility across
+    # different Superdapp webhook parsers.
     response_payload: dict[str, Any] = {
         "m": compact_body,
         "t": "chat",
+        "body": response_text,
+        "message": response_text,
+        "text": response_text,
+        "response": response_text,
+    }
+    response_payload["data"] = {
+        "m": compact_body,
+        "t": "chat",
+        "body": response_text,
+        "message": response_text,
+        "text": response_text,
+        "response": response_text,
     }
     if chat_id:
         response_payload["chatId"] = chat_id
+        response_payload["data"]["chatId"] = chat_id
     if room_id:
         response_payload["roomId"] = room_id
+        response_payload["data"]["roomId"] = room_id
     if room_participant_id:
         response_payload["roomParticipantId"] = room_participant_id
+        response_payload["data"]["roomParticipantId"] = room_participant_id
     if member_id:
         response_payload["memberId"] = member_id
+        response_payload["data"]["memberId"] = member_id
     if sender_id:
         response_payload["senderId"] = sender_id
+        response_payload["data"]["senderId"] = sender_id
     if user_id:
         response_payload["userId"] = user_id
+        response_payload["data"]["userId"] = user_id
 
     if Config.SUPERDAPP_ASYNC_DELIVERY_ENABLED:
         if not delivered:
