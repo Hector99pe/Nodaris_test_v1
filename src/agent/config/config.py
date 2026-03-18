@@ -29,7 +29,9 @@ class Config:
     # Railway asigna PORT automáticamente, usar ese si existe
     SUPERDAPP_WEBHOOK_PORT: int = int(os.getenv("PORT", "8080"))
     SUPERDAPP_WEBHOOK_PATH: str = os.getenv("SUPERDAPP_WEBHOOK_PATH", "/superdapp/webhook")
-    SUPERDAPP_SEND_ENDPOINT: str = os.getenv("SUPERDAPP_SEND_ENDPOINT", "/messages")
+    SUPERDAPP_SEND_ENDPOINT: str = os.getenv(
+        "SUPERDAPP_SEND_ENDPOINT", "v1/agent-bots/connections/{roomId}/messages"
+    )
     SUPERDAPP_DEBUG_WEBHOOK: bool = os.getenv("SUPERDAPP_DEBUG_WEBHOOK", "false").lower() == "true"
     SUPERDAPP_ASYNC_DELIVERY_ENABLED: bool = os.getenv(
         "SUPERDAPP_ASYNC_DELIVERY_ENABLED", "false"

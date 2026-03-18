@@ -332,27 +332,47 @@ async def send_superdapp_message(
     routing_context: dict[str, Any] | None = None,
 ) -> bool:
     """Send assistant response back to Superdapp through REST API."""
+
+    def _compute_room_id(ctx: dict[str, Any], fallback: str) -> str:
+        member_id = str(ctx.get("memberId") or "").strip()
+        sender_id = str(ctx.get("senderId") or "").strip()
+        owner_id = str(ctx.get("owner") or "").strip()
+
+        if member_id and sender_id and member_id != sender_id:
+            return f"{member_id}-{sender_id}"
+        if owner_id and sender_id:
+            return f"{owner_id}-{sender_id}"
+
+        explicit_room = str(ctx.get("roomId") or "").strip()
+        if explicit_room:
+            return explicit_room
+
+        chat_id = str(ctx.get("chatId") or "").strip()
+        if chat_id:
+            return chat_id
+
+        return fallback
+
     api_url = Config.SUPERDAPP_API_URL.strip()
     api_key = Config.SUPERDAPP_API_KEY
-    endpoint = Config.SUPERDAPP_SEND_ENDPOINT.strip() or "/messages"
+    endpoint_template = Config.SUPERDAPP_SEND_ENDPOINT.strip()
+    if not endpoint_template:
+        endpoint_template = "v1/agent-bots/connections/{roomId}/messages"
+
+    ctx = routing_context or {}
+    room_id = _compute_room_id(ctx, conversation_id)
+    endpoint = endpoint_template.replace("{roomId}", room_id)
 
     if not api_url or not api_key:
         logger.warning("Superdapp API not configured (SUPERDAPP_API_URL/SUPERDAPP_API_KEY)")
         return False
 
     url = f"{api_url.rstrip('/')}/{endpoint.lstrip('/')}"
-    compact_body = quote(json.dumps({"body": message}, ensure_ascii=False), safe="")
     payload: dict[str, Any] = {
-        "conversation_id": conversation_id,
-        "conversationId": conversation_id,
-        "chatId": conversation_id,
-        "message": message,
-        "text": message,
-        "response": message,
-        "reply": message,
-        "body": message,
-        "m": compact_body,
-        "t": "chat",
+        "message": {
+            "body": message,
+        },
+        "isSilent": False,
     }
     if routing_context:
         for key in (
@@ -390,7 +410,7 @@ async def send_superdapp_message(
 
     try:
         if Config.SUPERDAPP_DEBUG_WEBHOOK:
-            logger.info("Superdapp async delivery target url=%s", url)
+            logger.info("Superdapp async delivery target url=%s room_id=%s", url, room_id)
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(url, json=payload, headers=headers)
             if Config.SUPERDAPP_DEBUG_WEBHOOK:
