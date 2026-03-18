@@ -354,6 +354,36 @@ async def send_superdapp_message(
 
         return fallback
 
+    def _room_id_candidates(ctx: dict[str, Any], fallback: str) -> list[str]:
+        """Build ordered roomId candidates to handle tenant-specific ID conventions."""
+        candidates: list[str] = []
+
+        def _add(value: Any) -> None:
+            text = str(value or "").strip()
+            if text and text not in candidates:
+                candidates.append(text)
+
+        explicit_room = str(ctx.get("roomId") or "").strip()
+        chat_id = str(ctx.get("chatId") or "").strip()
+        member_id = str(ctx.get("memberId") or "").strip()
+        sender_id = str(ctx.get("senderId") or "").strip()
+        owner_id = str(ctx.get("owner") or "").strip()
+
+        # Prefer IDs emitted by incoming event.
+        _add(explicit_room)
+        _add(chat_id)
+
+        # SDK-style composition and reverse variant.
+        if member_id and sender_id:
+            _add(f"{member_id}-{sender_id}")
+            _add(f"{sender_id}-{member_id}")
+        if owner_id and sender_id:
+            _add(f"{owner_id}-{sender_id}")
+            _add(f"{sender_id}-{owner_id}")
+
+        _add(fallback)
+        return candidates
+
     api_url = Config.SUPERDAPP_API_URL.strip()
     api_key = Config.SUPERDAPP_API_KEY
     endpoint_template = Config.SUPERDAPP_SEND_ENDPOINT.strip()
@@ -362,7 +392,7 @@ async def send_superdapp_message(
 
     ctx = routing_context or {}
     room_id = _compute_room_id(ctx, conversation_id)
-    endpoint = endpoint_template.replace("{roomId}", room_id)
+    candidate_room_ids = _room_id_candidates(ctx, conversation_id)
 
     if Config.SUPERDAPP_DEBUG_WEBHOOK:
         logger.info(
@@ -379,74 +409,57 @@ async def send_superdapp_message(
         logger.warning("Superdapp API not configured (SUPERDAPP_API_URL/SUPERDAPP_API_KEY)")
         return False
 
-    url = f"{api_url.rstrip('/')}/{endpoint.lstrip('/')}"
     payload: dict[str, Any] = {
         "message": {
             "body": message,
         },
     }
-    if routing_context:
-        for key in (
-            "chatId",
-            "roomId",
-            "memberId",
-            "roomParticipantId",
-            "senderId",
-            "userId",
-            "id",
-            "type",
-            "owner",
-        ):
-            value = routing_context.get(key)
-            if value not in (None, ""):
-                payload[key] = value
 
-        # Some APIs expect target identifiers in a nested envelope.
-        payload["data"] = {
-            k: payload[k]
-            for k in (
-                "chatId",
-                "roomId",
-                "memberId",
-                "roomParticipantId",
-                "senderId",
-                "userId",
-            )
-            if k in payload
-        }
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
 
-    try:
-        if Config.SUPERDAPP_DEBUG_WEBHOOK:
-            logger.info("Superdapp async delivery target url=%s room_id=%s", url, room_id)
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(url, json=payload, headers=headers)
+    last_error: Exception | None = None
+    for candidate in candidate_room_ids:
+        endpoint = endpoint_template.replace("{roomId}", candidate)
+        url = f"{api_url.rstrip('/')}/{endpoint.lstrip('/')}"
+        try:
             if Config.SUPERDAPP_DEBUG_WEBHOOK:
-                preview = response.text[:300].replace("\n", " ")
-                logger.info(
-                    "Superdapp async delivery response status=%s body=%r",
-                    response.status_code,
-                    preview,
-                )
-            response.raise_for_status()
+                logger.info("Superdapp async delivery target url=%s room_id=%s", url, candidate)
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(url, json=payload, headers=headers)
+                if Config.SUPERDAPP_DEBUG_WEBHOOK:
+                    preview = response.text[:300].replace("\n", " ")
+                    logger.info(
+                        "Superdapp async delivery response status=%s body=%r",
+                        response.status_code,
+                        preview,
+                    )
 
-            # Some APIs return 200 but indicate failure in JSON payload.
-            try:
-                data = response.json()
-                if isinstance(data, dict):
-                    lowered_keys = {str(k).lower(): v for k, v in data.items()}
-                    if lowered_keys.get("ok") is False or lowered_keys.get("success") is False:
-                        logger.warning("Superdapp API returned logical failure payload: %s", data)
-                        return False
-            except Exception:
-                pass
-        return True
-    except Exception as exc:
-        logger.error("Failed to deliver message to Superdapp API (url=%s): %s", url, exc)
-        return False
+                if response.status_code >= 400:
+                    response.raise_for_status()
+
+                # Some APIs return 200 but indicate failure in JSON payload.
+                try:
+                    data = response.json()
+                    if isinstance(data, dict):
+                        lowered_keys = {str(k).lower(): v for k, v in data.items()}
+                        if lowered_keys.get("ok") is False or lowered_keys.get("success") is False:
+                            logger.warning("Superdapp API returned logical failure payload: %s", data)
+                            continue
+                except Exception:
+                    pass
+            return True
+        except Exception as exc:
+            last_error = exc
+            if Config.SUPERDAPP_DEBUG_WEBHOOK:
+                logger.warning("Superdapp async attempt failed for room_id=%s: %s", candidate, exc)
+            continue
+
+    if last_error:
+        logger.error("Failed to deliver message to Superdapp API after all roomId candidates: %s", last_error)
+    return False
 
 
 @app.get("/health")
