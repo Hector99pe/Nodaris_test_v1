@@ -326,7 +326,11 @@ async def _process_user_text(conversation_id: str, message: str) -> str:
     return await process_conversation(message=message, thread_id=thread_id)
 
 
-async def send_superdapp_message(conversation_id: str, message: str) -> bool:
+async def send_superdapp_message(
+    conversation_id: str,
+    message: str,
+    routing_context: dict[str, Any] | None = None,
+) -> bool:
     """Send assistant response back to Superdapp through REST API."""
     api_url = Config.SUPERDAPP_API_URL.strip()
     api_key = Config.SUPERDAPP_API_KEY
@@ -337,13 +341,48 @@ async def send_superdapp_message(conversation_id: str, message: str) -> bool:
         return False
 
     url = f"{api_url.rstrip('/')}/{endpoint.lstrip('/')}"
-    payload = {
+    compact_body = quote(json.dumps({"body": message}, ensure_ascii=False), safe="")
+    payload: dict[str, Any] = {
         "conversation_id": conversation_id,
         "conversationId": conversation_id,
+        "chatId": conversation_id,
         "message": message,
         "text": message,
         "response": message,
+        "reply": message,
+        "body": message,
+        "m": compact_body,
+        "t": "chat",
     }
+    if routing_context:
+        for key in (
+            "chatId",
+            "roomId",
+            "memberId",
+            "roomParticipantId",
+            "senderId",
+            "userId",
+            "id",
+            "type",
+            "owner",
+        ):
+            value = routing_context.get(key)
+            if value not in (None, ""):
+                payload[key] = value
+
+        # Some APIs expect target identifiers in a nested envelope.
+        payload["data"] = {
+            k: payload[k]
+            for k in (
+                "chatId",
+                "roomId",
+                "memberId",
+                "roomParticipantId",
+                "senderId",
+                "userId",
+            )
+            if k in payload
+        }
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -354,7 +393,25 @@ async def send_superdapp_message(conversation_id: str, message: str) -> bool:
             logger.info("Superdapp async delivery target url=%s", url)
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(url, json=payload, headers=headers)
+            if Config.SUPERDAPP_DEBUG_WEBHOOK:
+                preview = response.text[:300].replace("\n", " ")
+                logger.info(
+                    "Superdapp async delivery response status=%s body=%r",
+                    response.status_code,
+                    preview,
+                )
             response.raise_for_status()
+
+            # Some APIs return 200 but indicate failure in JSON payload.
+            try:
+                data = response.json()
+                if isinstance(data, dict):
+                    lowered_keys = {str(k).lower(): v for k, v in data.items()}
+                    if lowered_keys.get("ok") is False or lowered_keys.get("success") is False:
+                        logger.warning("Superdapp API returned logical failure payload: %s", data)
+                        return False
+            except Exception:
+                pass
         return True
     except Exception as exc:
         logger.error("Failed to deliver message to Superdapp API (url=%s): %s", url, exc)
@@ -426,7 +483,12 @@ async def superdapp_webhook(request: Request) -> dict[str, Any]:
         logger.exception("Error processing Superdapp message")
         response_text = f"Error interno procesando mensaje: {str(exc)[:200]}"
 
-    delivered = await send_superdapp_message(conversation_id=conversation_id, message=response_text)
+    routing_context = payload if isinstance(payload, dict) else None
+    delivered = await send_superdapp_message(
+        conversation_id=conversation_id,
+        message=response_text,
+        routing_context=routing_context,
+    )
 
     # Superdapp compact sync response format.
     compact_body = quote(json.dumps({"body": response_text}, ensure_ascii=False), safe="")
